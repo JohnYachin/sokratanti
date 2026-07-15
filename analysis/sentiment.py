@@ -1,6 +1,6 @@
 """
 Sentiment-анализ через OpenAI GPT-4o-mini.
-Анализирует новости CryptoPanic + Reddit посты.
+Источники: новости CryptoPanic (с голосами + panic score) + Reddit.
 """
 import os
 import json
@@ -17,23 +17,31 @@ def analyze_sentiment(coin: str) -> dict:
     from data.cryptopanic import get_news
     from data.reddit import get_reddit_posts
 
-    # Собираем данные
-    news = get_news(coin, limit=10)
+    # Собираем новости с метаданными
+    news = get_news(coin, limit=12)
     reddit = get_reddit_posts(coin, limit=5)
 
-    headlines = [item["title"] for item in news]
+    # Форматируем новости с контекстом голосов
+    news_lines = []
+    for n in news:
+        line = n["title"]
+        if n.get("votes_positive", 0) + n.get("votes_negative", 0) > 0:
+            line += f" [+{n['votes_positive']}👍 -{n['votes_negative']}👎]"
+        if n.get("panic_score", 0) > 5:
+            line += f" [panic={n['panic_score']}]"
+        news_lines.append(line)
+
     reddit_titles = [post["title"] for post in reddit]
-    all_texts = headlines + reddit_titles
+    all_texts = news_lines + reddit_titles
 
     if not all_texts:
         return {
             "score": 0.0,
             "sentiment": "neutral",
-            "summary": "Нет данных для анализа (настрой API-ключи в .env)",
+            "summary": "Нет данных для анализа",
             "headlines": [],
         }
 
-    # Проверяем наличие OpenAI ключа
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         logger.warning("OPENAI_API_KEY не задан — используем keyword sentiment.")
@@ -43,28 +51,30 @@ def analyze_sentiment(coin: str) -> dict:
 
 
 def _gpt_sentiment(coin: str, texts: list[str], api_key: str) -> dict:
-    """Анализ через GPT-4o-mini."""
+    """Анализ через GPT-4o-mini с торговым контекстом."""
     try:
         from openai import OpenAI
         client = OpenAI(api_key=api_key)
 
-        text_block = "\n".join(f"- {t}" for t in texts[:15])
+        text_block = "\n".join(f"• {t}" for t in texts[:15])
         prompt = (
-            f"Проанализируй настроение рынка для {coin.upper()} "
-            f"по следующим заголовкам новостей и постам:\n\n"
-            f"{text_block}\n\n"
-            f"Ответь строго в JSON формате:\n"
-            f'{{"score": <float -1.0 до 1.0>, '
+            f"Ты — опытный крипто-аналитик. Проанализируй настроение рынка "
+            f"для {coin.upper()} по заголовкам ниже. "
+            f"Учти голоса сообщества (👍/👎) и panic score если есть.\n\n"
+            f"Заголовки:\n{text_block}\n\n"
+            f"Дай оценку в JSON:\n"
+            f'{{"score": <float от -1.0 (медвежий) до 1.0 (бычий)>, '
             f'"sentiment": "<bullish|bearish|neutral>", '
-            f'"summary": "<1-2 предложения на русском>"}}'
+            f'"summary": "<2-3 предложения на русском: что происходит и что это значит для трейдера>", '
+            f'"key_factor": "<главный фактор влияющий на цену сейчас>"}}'
         )
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
-            temperature=0.2,
-            max_tokens=300,
+            temperature=0.3,
+            max_tokens=400,
         )
         result = json.loads(response.choices[0].message.content)
         result["headlines"] = texts[:5]
@@ -75,16 +85,16 @@ def _gpt_sentiment(coin: str, texts: list[str], api_key: str) -> dict:
 
 
 def _keyword_sentiment(coin: str, texts: list[str]) -> dict:
-    """
-    Простой keyword-анализ как fallback без OpenAI.
-    """
+    """Keyword-анализ как fallback без OpenAI."""
     bullish_kw = [
         "bull", "surge", "rally", "moon", "pump", "ath", "breakout",
         "gain", "rise", "up", "green", "buy", "adoption", "growth",
+        "record", "high", "support", "accumulate",
     ]
     bearish_kw = [
         "bear", "crash", "dump", "drop", "fall", "down", "red", "sell",
         "hack", "ban", "regulation", "fear", "loss", "decline",
+        "warning", "risk", "liquidat",
     ]
 
     text_lower = " ".join(texts).lower()
@@ -92,25 +102,17 @@ def _keyword_sentiment(coin: str, texts: list[str]) -> dict:
     bear_count = sum(text_lower.count(w) for w in bearish_kw)
     total = bull_count + bear_count
 
-    if total == 0:
-        score = 0.0
-    else:
-        score = round((bull_count - bear_count) / total, 2)
-
+    score = round((bull_count - bear_count) / total, 2) if total > 0 else 0.0
     sentiment = "neutral"
     if score >= 0.2:
         sentiment = "bullish"
     elif score <= -0.2:
         sentiment = "bearish"
 
-    summary = (
-        f"Анализ по ключевым словам: "
-        f"{bull_count} бычьих / {bear_count} медвежьих сигналов."
-    )
-
     return {
         "score": score,
         "sentiment": sentiment,
-        "summary": summary,
+        "summary": f"Keyword-анализ: {bull_count} бычьих / {bear_count} медвежьих сигналов.",
+        "key_factor": "—",
         "headlines": texts[:5],
     }
