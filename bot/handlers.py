@@ -256,3 +256,57 @@ async def cmd_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "\n\n".join(lines)
     await update.message.reply_text(text, parse_mode=ParseMode.HTML,
                                     disable_web_page_preview=True)
+
+
+# ── /analyze (Perplexity) ─────────────────────────────────────────────────────
+@auth_required
+async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args
+    coin = args[0].lower() if args else "btc"
+
+    msg = await update.message.reply_text(
+        f"🌐 Ищу в интернете по <b>{coin.upper()}</b> через Perplexity...",
+        parse_mode=ParseMode.HTML,
+    )
+
+    try:
+        # Параллельно: аналитика от sonar + свежие новости из поиска
+        analysis = get_market_analysis(coin)
+        news_results = search_crypto_news(coin, max_results=4)
+
+        if not analysis:
+            await msg.edit_text("❌ Perplexity недоступен. Проверь PERPLEXITY_API_KEY в .env")
+            return
+
+        # Форматируем новости из поиска
+        news_lines = []
+        for n in news_results:
+            title = n["title"][:80] + ("…" if len(n["title"]) > 80 else "")
+            date = f" <i>({n['date'][:10]})</i>" if n.get("date") else ""
+            news_lines.append(f"  • <a href='{n['url']}'>{title}</a>{date}")
+
+        news_block = "\n".join(news_lines) if news_lines else "  (нет результатов)"
+
+        # Источники
+        sources = analysis.get("sources", [])
+        src_block = ""
+        if sources:
+            src_links = " | ".join(
+                f"<a href='{s}'>🔗</a>" if isinstance(s, str) else ""
+                for s in sources[:3]
+            )
+            src_block = f"\n\n📎 <i>Источники: {src_links}</i>"
+
+        text = (
+            f"🌐 <b>Perplexity анализ {coin.upper()}</b>\n\n"
+            f"🧠 <b>Что происходит:</b>\n{analysis['analysis']}\n\n"
+            f"📰 <b>Найдено в интернете:</b>\n{news_block}"
+            f"{src_block}"
+        )
+
+        await msg.edit_text(text, parse_mode=ParseMode.HTML,
+                            disable_web_page_preview=True)
+
+    except Exception as e:
+        logger.error("analyze error: %s", e)
+        await msg.edit_text(f"❌ Ошибка: <code>{e}</code>", parse_mode=ParseMode.HTML)
