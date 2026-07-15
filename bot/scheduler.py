@@ -31,10 +31,17 @@ def schedule_jobs(app: Application):
 async def _send_market_report(context):
     """Автоматический отчёт по всем монетам."""
     from data.coingecko import get_price
+    from data.feargreed import get_fear_greed
     from analysis.signals import generate_signal
 
     user_id = context.job.data["user_id"]
-    lines = ["⏰ <b>Авто-отчёт рынка</b>\n"]
+
+    # Fear & Greed в шапке
+    fg = get_fear_greed()
+    lines = [
+        "⏰ <b>Авто-отчёт рынка</b>\n",
+        f"{fg['emoji']} Fear &amp; Greed: <b>{fg['value']}/100</b> — {fg['label_ru']}\n",
+    ]
 
     for coin in TRACKED_COINS:
         try:
