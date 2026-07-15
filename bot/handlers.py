@@ -317,9 +317,137 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @auth_required
 async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text(
-        "🔍 <b>Анализирую рынок...</b>\n⏳ ~30 секунд",
+        "🔍 <b>Анализирую рынок как трейдер...</b>\n⏳ ~40 секунд",
         parse_mode=ParseMode.HTML
     )
+
+    try:
+        import os, json
+        from openai import OpenAI
+        from data.coingecko import get_price
+        from data.feargreed import get_fear_greed
+        from analysis.trader_knowledge import TRADER_SYSTEM_PROMPT, get_coin_analysis_prompt
+
+        results = scan_all_coins()
+        fg = get_fear_greed()
+
+        # Цены (уже кешированы после scan_all_coins)
+        prices = {}
+        for r in results:
+            try:
+                prices[r["coin"]] = get_price(r["coin"].lower())
+            except Exception as e:
+                logger.warning("Цена для %s: %s", r["coin"], e)
+
+        # Собираем данные для GPT
+        coins_summary = []
+        for r in results:
+            ind = r["indicators"]
+            p   = prices.get(r["coin"], {})
+            coins_summary.append({
+                "coin":       r["coin"],
+                "signal":     r["signal"],
+                "probability": r["probability"],
+                "score":      r["score"],
+                "price_usd":  p.get("price_usd", 0),
+                "change_24h": round(p.get("change_24h", 0), 2),
+                "volume_24h": p.get("volume_24h", 0),
+                "rsi":        round(ind["rsi"], 1),
+                "macd_trend": "растёт" if ind["macd_diff"] > 0 else "падает",
+                "bb_position": (
+                    "у дна канала" if ind["bb_pband"] < 0.2
+                    else "у верха канала" if ind["bb_pband"] > 0.8
+                    else "в середине канала"
+                ),
+                "fear_greed": fg["value"],
+            })
+
+        fg_text = f"Fear & Greed Index: {fg['value']}/100 ({fg['label_ru']})"
+
+        # ── GPT с трейдерскими знаниями ──────────────────────────────────────
+        api_key = os.getenv("OPENAI_API_KEY", "")
+        gpt_data: dict[str, dict] = {}
+
+        if api_key:
+            try:
+                client_gpt = OpenAI(api_key=api_key)
+                user_prompt = get_coin_analysis_prompt(coins_summary, fg_text)
+                resp = client_gpt.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": TRADER_SYSTEM_PROMPT},
+                        {"role": "user",   "content": user_prompt},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.2,
+                    max_tokens=800,
+                )
+                gpt_data = json.loads(resp.choices[0].message.content)
+            except Exception as e:
+                logger.warning("GPT trader analysis error: %s", e)
+
+        # ── Формируем вывод ───────────────────────────────────────────────────
+        top = get_top_opportunity(results)
+        lines = [
+            f"📊 <b>Трейдерский анализ рынка</b>\n"
+            f"{fg['emoji']} Настроение рынка: <b>{fg['label_ru']}</b> {fg['value']}/100\n"
+        ]
+
+        RISK_EMOJI = {"низкий": "🟢", "средний": "🟡", "высокий": "🔴"}
+
+        for r in results:
+            coin  = r["coin"]
+            sig   = r["signal"]
+            prob  = r["probability"]
+            p     = prices.get(coin, {})
+            price = p.get("price_usd", 0)
+            ch    = p.get("change_24h", 0)
+            ch_icon = "📈" if ch >= 0 else "📉"
+
+            gpt_coin = gpt_data.get(coin, {})
+            gpt_action = gpt_coin.get("action", sig)
+            gpt_reason = gpt_coin.get("reason", " | ".join(r["reasons"][:2]))
+            gpt_risk   = gpt_coin.get("risk", "средний")
+            risk_e     = RISK_EMOJI.get(gpt_risk, "🟡")
+
+            # Нормализуем action из GPT к одному из трёх
+            if "ПОКУПАТЬ" in gpt_action.upper() or sig == "BUY":
+                header = f"🟢 <b>{coin} — ПОКУПАТЬ</b>"
+                bar = "🟩" * round(prob / 20) + "⬜" * (5 - round(prob / 20))
+            elif "ПРОДАВАТЬ" in gpt_action.upper() or sig == "SELL":
+                header = f"🔴 <b>{coin} — ПРОДАВАТЬ</b>"
+                bar = "🟥" * round(prob / 20) + "⬜" * (5 - round(prob / 20))
+            else:
+                header = f"🟡 <b>{coin} — ЖДАТЬ</b>"
+                bar = "🟨🟨🟨⬜⬜"
+
+            price_str = f"<code>${price:,.2f}</code>  {ch_icon}{ch:+.1f}%" if price else ""
+
+            lines.append(
+                f"{header}  {price_str}\n"
+                f"{bar} <b>{prob}%</b> вероятность  |  {risk_e} Риск: {gpt_risk}\n"
+                f"<i>{gpt_reason}</i>"
+            )
+
+        # Итог
+        if top:
+            action_word = "КУПИТЬ" if top["signal"] == "BUY" else "ПРОДАТЬ"
+            lines.append(
+                f"\n🎯 <b>Лучшая возможность: {action_word} {top['coin']}</b>\n"
+                f"Вероятность удачи: <b>{top['probability']}%</b>"
+            )
+        else:
+            lines.append("\n🟡 <b>Явных возможностей нет сейчас. Жди алерта.</b>")
+
+        lines.append("\n<i>⚠️ Не финансовый совет. Всегда управляй риском.</i>")
+
+        await msg.edit_text("\n\n".join(lines), parse_mode=ParseMode.HTML)
+
+    except Exception as e:
+        logger.error("scan error: %s", e)
+        await msg.edit_text(f"❌ Ошибка: <code>{e}</code>", parse_mode=ParseMode.HTML)
+
+
 
     try:
         import os, json
