@@ -8,6 +8,7 @@ from telegram.constants import ParseMode
 
 from data.coingecko import get_price, get_ohlcv
 from data.feargreed import get_fear_greed
+from data.cryptopanic import get_news
 from analysis.technical import calculate_indicators
 from analysis.signals import generate_signal
 from analysis.sentiment import analyze_sentiment
@@ -53,8 +54,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 <b>Sokratanti</b> — твой крипто-ассистент\n\n"
         "📋 <b>Команды:</b>\n"
         "/price <code>BTC</code> — текущая цена\n"
-        "/signal <code>BTC</code> — торговый сигнал (RSI + MACD + BB)\n"
+        "/signal <code>BTC</code> — торговый сигнал (RSI + MACD + BB + F&G)\n"
         "/sentiment <code>BTC</code> — настроение рынка (AI)\n"
+        "/news <code>BTC</code> — свежие новости с CryptoPanic\n"
         "/feargreed — индекс страха и жадности рынка\n"
         "/history — история последних сигналов\n"
         "/coins — список отслеживаемых монет\n\n"
