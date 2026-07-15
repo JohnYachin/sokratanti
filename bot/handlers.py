@@ -55,6 +55,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/price <code>BTC</code> — текущая цена\n"
         "/signal <code>BTC</code> — торговый сигнал (RSI + MACD + BB)\n"
         "/sentiment <code>BTC</code> — настроение рынка (AI)\n"
+        "/feargreed — индекс страха и жадности рынка\n"
         "/history — история последних сигналов\n"
         "/coins — список отслеживаемых монет\n\n"
         "💡 <b>Монеты:</b> BTC, ETH, SOL, BNB, DOGE\n\n"
