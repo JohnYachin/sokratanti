@@ -13,6 +13,7 @@ from data.perplexity import search_crypto_news, get_market_analysis
 from analysis.technical import calculate_indicators
 from analysis.signals import generate_signal
 from analysis.sentiment import analyze_sentiment
+from analysis.scanner import scan_all_coins, get_top_opportunity
 from db.database import save_signal, get_history
 
 logger = logging.getLogger(__name__)
@@ -309,4 +310,71 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error("analyze error: %s", e)
+        await msg.edit_text(f"❌ Ошибка: <code>{e}</code>", parse_mode=ParseMode.HTML)
+
+
+# ── /scan ───────────────────────────────────────────────────────────────────
+@auth_required
+async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = await update.message.reply_text(
+        "🔍 <b>Сканирую все монеты...</b>\n"
+        "⏳ Это займёт ~30 секунд
+",
+        parse_mode=ParseMode.HTML
+    )
+
+    try:
+        results = scan_all_coins()
+        top = get_top_opportunity(results)
+
+        lines = ["🔍 <b>Скан рынка</b> — все монеты\n"]
+
+        for r in results:
+            coin = r["coin"]
+            sig  = r["signal"]
+            prob = r["probability"]
+            score = r["score"]
+            ind  = r["indicators"]
+
+            # Индикатор уверенности
+            if sig == "BUY":
+                conf_bar = "🟩" * round(prob / 20) + "⬜" * (5 - round(prob / 20))
+                action = "🟢 КУПИТЬ"
+            elif sig == "SELL":
+                conf_bar = "🟥" * round(prob / 20) + "⬜" * (5 - round(prob / 20))
+                action = "🔴 ПРОДАТЬ"
+            else:
+                conf_bar = "🟨" * 3 + "⬜" * 2
+                action = "🟡 ЖДАТЬ"
+
+            lines.append(
+                f"<b>{coin}</b>  {action}\n"
+                f"{conf_bar} <code>{prob}%</code> уверенность\n"
+                f"   RSI: <code>{ind['rsi']:.1f}</code> | "
+                f"MACD: <code>{'▲' if ind['macd_diff'] > 0 else '▼'}</code> | "
+                f"Score: <code>{score:+d}</code>"
+            )
+
+        # Главный совет
+        if top:
+            lines.append("")
+            if top["signal"] == "BUY":
+                lines.append(
+                    f"🎯 <b>ЛУЧШАЯ ВОЗМОЖНОСТЬ: КУПИТЬ {top['coin']}</b>\n"
+                    f"💡 Вероятность удачи: <b>{top['probability']}%</b>"
+                )
+            else:
+                lines.append(
+                    f"🎯 <b>ЛУЧШАЯ ВОЗМОЖНОСТЬ: ПРОДАТЬ {top['coin']}</b>\n"
+                    f"💡 Вероятность удачи: <b>{top['probability']}%</b>"
+                )
+        else:
+            lines.append("\n🟡 <b>Нет очевидных возможностей сейчас. Жди алерта.</b>")
+
+        lines.append("\n⚠️ <i>Не является финансовым советом. DYOR.</i>")
+
+        await msg.edit_text("\n\n".join(lines), parse_mode=ParseMode.HTML)
+
+    except Exception as e:
+        logger.error("scan error: %s", e)
         await msg.edit_text(f"❌ Ошибка: <code>{e}</code>", parse_mode=ParseMode.HTML)
