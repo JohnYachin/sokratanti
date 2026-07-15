@@ -7,6 +7,7 @@ from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
 from data.coingecko import get_price, get_ohlcv
+from data.feargreed import get_fear_greed
 from analysis.technical import calculate_indicators
 from analysis.signals import generate_signal
 from analysis.sentiment import analyze_sentiment
