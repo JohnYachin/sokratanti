@@ -12,6 +12,7 @@ from bot.handlers import (
     cmd_sentiment,
     cmd_history,
     cmd_coins,
+    cmd_feargreed,
 )
 from bot.scheduler import schedule_jobs
 from db.database import init_db
@@ -46,6 +47,7 @@ def main():
     app.add_handler(CommandHandler("sentiment", cmd_sentiment))
     app.add_handler(CommandHandler("history", cmd_history))
     app.add_handler(CommandHandler("coins", cmd_coins))
+    app.add_handler(CommandHandler("feargreed", cmd_feargreed))
 
     # --- Автоматические отчёты ---
     schedule_jobs(app)
