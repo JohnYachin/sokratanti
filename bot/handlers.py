@@ -211,3 +211,42 @@ async def cmd_feargreed(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"80–100 Экстремальная жадность → продавай</i>"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
+
+# ── /news ─────────────────────────────────────────────────────────────────────
+@auth_required
+async def cmd_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args
+    coin = args[0].lower() if args else "btc"
+
+    COIN_MAP = {
+        "bitcoin": "btc", "ethereum": "eth", "solana": "sol",
+        "binancecoin": "bnb", "dogecoin": "doge",
+    }
+    coin = COIN_MAP.get(coin, coin)
+
+    await update.message.reply_text(f"🔍 Ищу новости по <b>{coin.upper()}</b>...", parse_mode=ParseMode.HTML)
+
+    news = get_news(coin, limit=8)
+    if not news:
+        await update.message.reply_text("❌ Новости не найдены. Проверь CRYPTOPANIC_API_KEY в .env")
+        return
+
+    lines = [f"📰 <b>Новости {coin.upper()} (CryptoPanic)</b>\n"]
+    for i, n in enumerate(news, 1):
+        title = n["title"][:90] + ("…" if len(n["title"]) > 90 else "")
+        pos = n["votes_positive"]
+        neg = n["votes_negative"]
+        panic = n["panic_score"]
+
+        votes_str = f"+{pos}👍 -{neg}👎" if (pos + neg) > 0 else ""
+        panic_str = f" 🔥{panic}" if panic > 0 else ""
+
+        lines.append(
+            f"{i}. <a href='{n['url']}'>{title}</a>\n"
+            f"   {votes_str}{panic_str}"
+        )
+
+    text = "\n\n".join(lines)
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML,
+                                    disable_web_page_preview=True)
