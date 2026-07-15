@@ -186,3 +186,26 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = "📜 <b>История сигналов (последние 10):</b>\n\n" + "\n".join(lines)
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
+
+# ── /feargreed ────────────────────────────────────────────────────────────────
+@auth_required
+async def cmd_feargreed(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = get_fear_greed()
+    value = data["value"]
+
+    # Прогресс-бар
+    filled = round(value / 10)
+    bar = "█" * filled + "░" * (10 - filled)
+
+    text = (
+        f"{data['emoji']} <b>Fear &amp; Greed Index</b>\n\n"
+        f"<code>[{bar}]</code> <b>{value}/100</b>\n"
+        f"Состояние: <b>{data['label_ru']}</b>\n\n"
+        f"📖 <i>0–20  Экстремальный страх → покупай\n"
+        f"20–40 Страх\n"
+        f"40–60 Нейтрально\n"
+        f"60–80 Жадность\n"
+        f"80–100 Экстремальная жадность → продавай</i>"
+    )
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
