@@ -317,9 +317,7 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @auth_required
 async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text(
-        "🔍 <b>Сканирую все монеты...</b>\n"
-        "⏳ Это займёт ~30 секунд
-",
+        "🔍 <b>Сканирую все монеты...</b>\n⏳ Это займёт ~30 секунд",
         parse_mode=ParseMode.HTML
     )
 
