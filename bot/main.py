@@ -15,6 +15,7 @@ from bot.handlers import (
     cmd_feargreed,
     cmd_news,
     cmd_analyze,
+    cmd_scan,
 )
 from bot.scheduler import schedule_jobs
 from db.database import init_db
@@ -52,6 +53,7 @@ def main():
     app.add_handler(CommandHandler("feargreed", cmd_feargreed))
     app.add_handler(CommandHandler("news", cmd_news))
     app.add_handler(CommandHandler("analyze", cmd_analyze))
+    app.add_handler(CommandHandler("scan", cmd_scan))
 
     # --- Автоматические отчёты ---
     schedule_jobs(app)
