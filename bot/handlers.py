@@ -446,10 +446,3 @@ async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error("scan error: %s", e)
         await msg.edit_text(f"❌ Ошибка: <code>{e}</code>", parse_mode=ParseMode.HTML)
-
-
-
-    try:
-        import os, json
-        from openai import OpenAI
-
