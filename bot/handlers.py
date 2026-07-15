@@ -160,10 +160,14 @@ async def cmd_sentiment(update: Update, context: ContextTypes.DEFAULT_TYPE):
             emoji, mood = "🟡", "Нейтральное"
 
         headlines_html = "\n".join(f"  • {h}" for h in result.get("headlines", [])[:5])
+        key_factor = result.get("key_factor", "")
+        key_factor_line = f"\n🔑 <b>Ключевой фактор:</b> {key_factor}" if key_factor and key_factor != "—" else ""
+
         text = (
             f"{emoji} <b>Настроение {coin.upper()}: {mood}</b>\n"
             f"Индекс: <code>{score:+.2f}</code> (от -1 до +1)\n\n"
-            f"📝 {result['summary']}\n\n"
+            f"📝 {result['summary']}"
+            f"{key_factor_line}\n\n"
             f"📰 <b>Свежие новости:</b>\n{headlines_html}"
         )
         await msg.edit_text(text, parse_mode=ParseMode.HTML)
