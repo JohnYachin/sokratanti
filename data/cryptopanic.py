@@ -1,10 +1,9 @@
 """
-Получение новостей криптовалют через CryptoPanic API (Growth Weekly plan).
-Базовый URL: https://cryptopanic.com/api/growth_weekly/v2
-Документация: https://cryptopanic.com/developers/api/
+data/cryptopanic.py — Новости через CryptoPanic API (Growth Weekly).
 
-Бонус: поля votes (positive/negative) и panic_score используются
-для sentiment-анализа без необходимости в OpenAI.
+ВАЖНО: CryptoPanic является ОПЦИОНАЛЬНЫМ источником (v1.1+).
+Основные новости поступают через RSS (news/rss.py). Без CRYPTOPANIC_API_KEY
+бот работает корректно — производится graceful degradation через RSS.
 """
 import os
 import logging
@@ -175,6 +174,4 @@ def _newsapi_fallback(coin: str, limit: int) -> list[dict]:
     except Exception as e:
         logger.error("NewsAPI error: %s", e)
         return []
-
-import os
 
