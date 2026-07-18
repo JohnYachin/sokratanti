@@ -69,6 +69,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/feargreed — индекс страха и жадности\n"
         "/history — история последних сигналов\n"
         "/coins — список отслеживаемых монет\n\n"
+        "📦 <b>Портфель:</b>\n"
+        "/portfolio — мои позиции + P&L + сигналы\n"
+        "/add <code>BTC 0.1 63500</code> — добавить позицию\n"
+        "/remove <code>BTC</code> — удалить позицию\n\n"
         "💡 <b>Монеты:</b> BTC, ETH, SOL, BNB, DOGE\n\n"
         "⏰ Авто-отчёты каждые 4 ч. | 🚨 Алерты при BUY_ZONE / STRONG_SETUP"
     )
