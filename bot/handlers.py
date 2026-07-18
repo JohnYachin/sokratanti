@@ -446,3 +446,46 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"{emoji} <b>{coin}</b> — {sig} (<code>{score:+.1f}</code>)  {created_at[:16]}")
     text = "📜 <b>История сигналов (последние 10):</b>\n\n" + "\n".join(lines)
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
+
+# ── /backtest ─────────────────────────────────────────────────────────────────
+@auth_required
+async def cmd_backtest(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /backtest [монета] [дни] [таймфрейм]
+    Примеры:
+      /backtest btc
+      /backtest eth 365
+      /backtest sol 90 4h
+    """
+    args = context.args or []
+    coin = args[0].lower() if len(args) >= 1 else "btc"
+    try:
+        lookback = int(args[1]) if len(args) >= 2 else 180
+        lookback = max(30, min(lookback, 365))
+    except ValueError:
+        lookback = 180
+    interval = args[2].lower() if len(args) >= 3 else "1d"
+    if interval not in ("1d", "4h"):
+        interval = "1d"
+
+    msg = await update.message.reply_text(
+        f"⏳ Бэктест <b>{coin.upper()}</b> ({interval}, {lookback} дн.)...\n"
+        f"<i>Анализирую историю без look-ahead bias — займёт 10-30 сек</i>",
+        parse_mode=ParseMode.HTML,
+    )
+    try:
+        from analysis.backtest import run_backtest, format_backtest
+        result = await asyncio.to_thread(run_backtest, coin, interval, lookback)
+        if result is None:
+            await msg.edit_text(
+                f"❌ Недостаточно данных для бэктеста <b>{coin.upper()}</b>.\n"
+                f"Попробуй уменьшить период или использовать 1d интервал.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        text = format_backtest(result)
+        await msg.edit_text(text, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logger.error("backtest error: %s", e)
+        await msg.edit_text(f"❌ Ошибка: <code>{e}</code>", parse_mode=ParseMode.HTML)
