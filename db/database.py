@@ -79,11 +79,13 @@ def _init_postgres():
     """)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS alerts (
-            id          SERIAL PRIMARY KEY,
-            coin        VARCHAR(10) NOT NULL,
-            signal      VARCHAR(10) NOT NULL,
-            price_usd   NUMERIC(16,2),
-            sent_at     TIMESTAMPTZ DEFAULT NOW()
+            id              SERIAL PRIMARY KEY,
+            idempotency_key VARCHAR(128) UNIQUE,
+            coin            VARCHAR(10) NOT NULL,
+            signal          VARCHAR(30) NOT NULL,
+            price_usd       NUMERIC(16,4),
+            sent_at         TIMESTAMPTZ DEFAULT NOW(),
+            cooldown_until  TIMESTAMPTZ
         )
     """)
     conn.commit()
@@ -130,11 +132,13 @@ def _init_sqlite():
     """)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS alerts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            coin TEXT NOT NULL,
-            signal TEXT NOT NULL,
-            price_usd REAL,
-            sent_at TEXT DEFAULT (datetime('now'))
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            idempotency_key TEXT UNIQUE,
+            coin            TEXT NOT NULL,
+            signal          TEXT NOT NULL,
+            price_usd       REAL,
+            sent_at         TEXT DEFAULT (datetime('now')),
+            cooldown_until  TEXT
         )
     """)
     conn.commit()
@@ -295,3 +299,81 @@ def get_stats() -> dict:
         row[0]: {"buy": row[1], "sell": row[2], "hold": row[3], "total": row[4]}
         for row in rows
     }
+
+
+# ── Идемпотентные алерты (состояние в БД) ─────────────────────────────────────────────────────
+
+def alert_already_sent(idempotency_key: str, cooldown_seconds: int = 14400) -> bool:
+    """
+    Проверяет был ли алерт с этим ключом отправлен за последние cooldown_seconds.
+    Возвращает True если алерт уже был, False если нужно отправить.
+    """
+    try:
+        if _use_postgres():
+            conn = _get_pg_conn()
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT 1 FROM alerts
+                WHERE idempotency_key = %s
+                  AND sent_at >= NOW() - INTERVAL '%s seconds'
+                LIMIT 1
+                """,
+                (idempotency_key, cooldown_seconds)
+            )
+            found = cur.fetchone() is not None
+            cur.close(); conn.close()
+            return found
+        else:
+            db_path = os.getenv("SQLITE_PATH", "sokratanti.db")
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT 1 FROM alerts
+                WHERE idempotency_key = ?
+                  AND sent_at >= datetime('now', ? || ' seconds')
+                LIMIT 1
+                """,
+                (idempotency_key, f"-{cooldown_seconds}")
+            )
+            found = cur.fetchone() is not None
+            conn.close()
+            return found
+    except Exception as e:
+        logger.warning("alert_already_sent error: %s", e)
+        return False  # При ошибке — отправляем (не пропускаем)
+
+
+def record_alert(idempotency_key: str, coin: str, signal: str, price_usd: float):
+    """
+    Записывает алерт в БД с idempotency_key.
+    INSERT OR IGNORE — если ключ уже есть, игнорируем.
+    """
+    try:
+        if _use_postgres():
+            conn = _get_pg_conn()
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO alerts (idempotency_key, coin, signal, price_usd)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (idempotency_key) DO NOTHING
+                """,
+                (idempotency_key, coin, signal, price_usd)
+            )
+            conn.commit(); cur.close(); conn.close()
+        else:
+            db_path = os.getenv("SQLITE_PATH", "sokratanti.db")
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO alerts (idempotency_key, coin, signal, price_usd)
+                VALUES (?, ?, ?, ?)
+                """,
+                (idempotency_key, coin, signal, price_usd)
+            )
+            conn.commit(); conn.close()
+    except Exception as e:
+        logger.error("record_alert error: %s", e)
