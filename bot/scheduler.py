@@ -141,7 +141,7 @@ async def _check_signal_alerts(context):
                 continue
 
             # Формируем сообщение
-            price_data = get_price(coin)
+            price_data = await asyncio.to_thread(get_price, coin)
             price = price_data["price_usd"]
             ch = price_data["change_24h"]
             ind = result["indicators"]
