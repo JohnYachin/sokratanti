@@ -262,7 +262,7 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
 
     # ── Торговый план (только для BUY_ZONE и выше) ──────────────────────────
     trading_plan = None
-    if status in ("BUY_ZONE", "STRONG_SETUP"):
+    if status in ("BUY_ZONE", "STRONG_SETUP", "WATCH"):
         try:
             from analysis.levels import find_swing_points, find_key_levels
             from analysis.risk import calculate_trading_plan
