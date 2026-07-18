@@ -261,7 +261,18 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
         reasons.append(news_reason)
 
     # ── Setup Score ──────────────────────────────────────────────────────────
-    setup_score = _calc_setup_score(ind_1d, ind_4h or None, fg_score, news_raw, trend)
+    # Загружаем выученные веса из БД (None если монета ещё не оптимизирована)
+    learned_weights = None
+    try:
+        from analysis.optimizer import get_learned_weights
+        learned_weights = get_learned_weights(coin)
+    except Exception as e:
+        logger.debug("get_learned_weights failed: %s", e)
+
+    setup_score = _calc_setup_score(
+        ind_1d, ind_4h or None, fg_score, news_raw, trend,
+        learned_weights=learned_weights,
+    )
 
     # Hard override: критическое событие
     if has_critical:
