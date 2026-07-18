@@ -16,7 +16,10 @@ from telegram.constants import ParseMode
 
 logger = logging.getLogger(__name__)
 
-TRACKED_COINS = ["btc", "eth", "sol", "bnb", "doge"]
+TRACKED_COINS = [
+    "btc", "eth", "bnb", "sol", "xrp",
+    "doge", "ada", "avax", "link", "dot",
+]
 
 # Статусы, по которым шлём алерт
 ALERT_STATUSES = {"STRONG_SETUP", "BUY_ZONE", "EVENT_RISK"}
