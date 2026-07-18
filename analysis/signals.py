@@ -78,12 +78,17 @@ def _get_news_score(coin: str) -> tuple[float, str, bool]:
 
 
 def _calc_setup_score(ind_1d: dict, ind_4h: dict | None, fg_score: int,
-                      news_raw: float, trend: str) -> int:
+                      news_raw: float, trend: str,
+                      learned_weights: dict | None = None) -> int:
     """
     Рассчитывает setup score 0-100.
-    Не привязан к линейной формуле — каждый компонент взвешен.
+    Если learned_weights переданы (из optimizer.get_learned_weights),
+    применяет поправки к базовым весам каждого индикатора.
+
+    Поправка = ±7 баллов в зависимости от исторической надёжности индикатора.
     """
     score = 0
+    w = learned_weights or {}
 
     # Тренд (20 pts)
     if trend == "bullish":
@@ -91,33 +96,45 @@ def _calc_setup_score(ind_1d: dict, ind_4h: dict | None, fg_score: int,
     elif trend == "neutral":
         score += 10
 
-    # RSI качество (15 pts)
+    # RSI качество (15 pts + learned adj)
     rsi = ind_1d.get("rsi")
     if rsi is not None:
-        if 25 <= rsi <= 45:       # перепродан или слабый — хорошо для входа
-            score += 15
+        if 25 <= rsi <= 45:
+            base = 15
+            adj = w.get("rsi_oversold", 0.0) if rsi <= 35 else w.get("rsi_moderate", 0.0)
+            score += max(0, base + adj)
         elif 45 < rsi <= 55:
             score += 8
-        elif rsi < 25:            # экстремально перепродан
+        elif rsi < 25:
             score += 12
 
-    # BB позиция (10 pts)
+    # BB позиция (10 pts + learned adj)
     pband = ind_1d.get("bb_pband")
     if pband is not None:
         if pband <= 0.20:
-            score += 10
+            score += max(0, 10 + w.get("bb_low", 0.0))
         elif pband <= 0.40:
             score += 5
 
-    # MACD (10 pts)
+    # MACD (10 pts + learned adj)
     macd_diff = ind_1d.get("macd_diff")
     if macd_diff is not None and macd_diff > 0:
-        score += 10
+        score += max(0, 10 + w.get("macd_bull", 0.0))
 
-    # ADX — сила тренда (5 pts)
+    # ADX — сила тренда (5 pts + learned adj)
     adx = ind_1d.get("adx")
     if adx is not None and adx >= 20:
-        score += 5
+        score += max(0, 5 + w.get("adx_trending", 0.0))
+
+    # EMA alignment bonus (learned adj)
+    price = ind_1d.get("price")
+    ema20 = ind_1d.get("ema20")
+    ema50 = ind_1d.get("ema50")
+    ema200 = ind_1d.get("ema200")
+    if price and ema20 and ema50 and price > ema20 and ema20 > ema50:
+        score += max(0, 5 + w.get("ema_bull", 0.0))
+    if price and ema200 and price > ema200:
+        score += max(0, 3 + w.get("ema_above_200", 0.0))
 
     # 4h подтверждение (15 pts)
     if ind_4h:
@@ -129,7 +146,7 @@ def _calc_setup_score(ind_1d: dict, ind_4h: dict | None, fg_score: int,
             score += 7
 
     # Fear & Greed (10 pts)
-    if fg_score >= 1:       # страх (хорошо для покупки)
+    if fg_score >= 1:
         score += 10
     elif fg_score == 0:
         score += 5
@@ -143,6 +160,7 @@ def _calc_setup_score(ind_1d: dict, ind_4h: dict | None, fg_score: int,
         score -= 10
 
     return max(0, min(100, score))
+
 
 
 def _signal_status(setup_score: int, has_critical: bool) -> tuple[str, str, str]:
