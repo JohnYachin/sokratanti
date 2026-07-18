@@ -267,3 +267,91 @@ async def _weekly_optimize(context):
         logger.error("Weekly optimize report send: %s", e)
 
     logger.info("=== Еженедельная авто-оптимизация DONE ===")
+
+
+# ── Трекинг результатов сигналов ─────────────────────────────────────────────
+async def _check_signal_outcomes(context):
+    """
+    Запускается каждый час.
+    Для каждого открытого сигнала проверяет текущую цену:
+      - Достигнута цель 1 → WIN  → уведомление + закрытие
+      - Задет стоп       → LOSS → уведомление + закрытие
+      - Прошло > 15 дней → TIMEOUT → тихое закрытие
+    """
+    from data.coingecko import get_price
+    from db.database import signal_trades_get_open, signal_trade_close
+    from datetime import datetime, timezone
+
+    user_id      = context.job.data["user_id"]
+    open_signals = signal_trades_get_open()
+    if not open_signals:
+        return
+
+    logger.info("Outcome check: %d открытых сигналов", len(open_signals))
+
+    for sig in open_signals:
+        coin     = sig["coin"]
+        trade_id = sig["id"]
+        entry    = float(sig["entry_price"])
+        stop     = float(sig["stop_loss"])
+        t1       = float(sig["target1"])
+        t2       = float(sig["target2"]) if sig.get("target2") else None
+        leverage = int(sig.get("leverage", 1))
+        sig_type = sig["signal_type"]
+        created_at = sig["created_at"]
+
+        try:
+            price_data = await asyncio.to_thread(get_price, coin)
+            cur_price  = float(price_data["price_usd"])
+            pnl_pct     = (cur_price - entry) / entry
+            pnl_lev_pct = pnl_pct * leverage
+
+            outcome = None; exit_price = None; note = ""
+
+            if cur_price <= stop:
+                outcome = "loss"; exit_price = cur_price
+                note = f"Стоп задет: ${cur_price:,.4f}"
+            elif cur_price >= t1:
+                outcome = "win"; exit_price = cur_price
+                hit = "T2" if t2 and cur_price >= t2 else "T1"
+                note = f"{hit} достигнута: ${cur_price:,.4f}"
+            else:
+                try:
+                    if isinstance(created_at, str):
+                        created_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    else:
+                        created_dt = created_at
+                    if (datetime.now(timezone.utc) - created_dt).days >= 15:
+                        outcome = "timeout"; exit_price = cur_price
+                        note = f"Таймаут: ${cur_price:,.4f}"
+                except Exception:
+                    pass
+
+            if outcome is None:
+                continue
+
+            signal_trade_close(trade_id, outcome, exit_price,
+                               pnl_pct * 100, pnl_lev_pct * 100, note)
+
+            if outcome in ("win", "loss"):
+                sign = "+" if pnl_lev_pct >= 0 else ""
+                icon = "✅" if outcome == "win" else "❌"
+                text = (
+                    f"{icon} <b>Результат: {coin.upper()}</b>\n\n"
+                    f"{'🎯' if outcome=='win' else '🛑'} {note}\n\n"
+                    f"📊 Сигнал: <b>{sig_type}</b>\n"
+                    f"  Вход:  <code>${entry:,.4f}</code>\n"
+                    f"  Выход: <code>${exit_price:,.4f}</code>\n\n"
+                    f"💰 P&L без плеча:   <code>{'+' if pnl_pct>=0 else ''}{pnl_pct*100:.2f}%</code>\n"
+                    f"💥 P&L с плечом ×{leverage}: <code>{sign}{pnl_lev_pct*100:.2f}%</code>\n\n"
+                    f"<i>/results — вся статистика сигналов</i>"
+                )
+                await context.bot.send_message(
+                    chat_id=user_id, text=text, parse_mode=ParseMode.HTML,
+                )
+                logger.info("Outcome %s: %s %s pnl=%.1f%% lev×%d=%.1f%%",
+                            outcome, coin.upper(), sig_type,
+                            pnl_pct*100, leverage, pnl_lev_pct*100)
+
+        except Exception as e:
+            logger.error("Outcome check error %s #%d: %s", coin, trade_id, e)
