@@ -33,6 +33,141 @@ ATR_STOP_MULT   = 1.5
 ATR_TARGET_MULT = 2.5
 
 
+def _run_backtest_core(
+    df,
+    coin: str,
+    interval: str,
+    lookback: int,
+    min_score: int,
+    atr_stop_mult: float,
+    atr_target_mult: float,
+    max_hold_bars: int,
+) -> "Optional[BacktestResult]":
+    """
+    Ядро бэктеста: принимает готовый DataFrame.
+    Вызывается из run_backtest() и из optimizer.run_grid_search()
+    (где DataFrame загружается один раз для всех комбинаций).
+    """
+    if interval == "1d":
+        lookback_bars = lookback
+    elif interval == "4h":
+        lookback_bars = lookback * 6
+    elif interval == "1h":
+        lookback_bars = lookback * 24
+    else:
+        lookback_bars = lookback
+
+    test_start = max(WARMUP_BARS, len(df) - lookback_bars)
+    df_full = df
+
+    trades: "list[Trade]" = []
+    in_trade    = False
+    entry_price = 0.0
+    stop_loss   = 0.0
+    target      = 0.0
+    entry_date  = None
+    entry_bar   = 0
+    entry_score = 0
+
+    equity       = 0.0
+    equity_curve = [0.0]
+    peak_equity  = 0.0
+    max_dd       = 0.0
+
+    for i in range(WARMUP_BARS, len(df_full)):
+        df_slice  = df_full.iloc[:i + 1]
+        bar_date  = df_full.index[i]
+        bar_close = float(df_full["close"].iloc[i])
+        bar_high  = float(df_full["high"].iloc[i]) if "high" in df_full.columns else bar_close
+        bar_low   = float(df_full["low"].iloc[i])  if "low"  in df_full.columns else bar_close
+        in_test   = i >= test_start
+
+        if in_trade:
+            bars_held  = i - entry_bar
+            exit_price = None
+            outcome    = None
+
+            if bar_low <= stop_loss:
+                exit_price = stop_loss;  outcome = "loss"
+            elif bar_high >= target:
+                exit_price = target;     outcome = "win"
+            elif bars_held >= max_hold_bars:
+                exit_price = bar_close;  outcome = "timeout"
+
+            if exit_price is not None:
+                pnl = (exit_price - entry_price) / entry_price
+                if in_test:
+                    trades.append(Trade(
+                        entry_date=entry_date, exit_date=bar_date,
+                        coin=coin, entry_price=entry_price,
+                        exit_price=exit_price, stop_loss=stop_loss,
+                        target=target, pnl_pct=pnl, outcome=outcome,
+                        bars_held=bars_held, entry_score=entry_score,
+                    ))
+                    equity += pnl
+                    equity_curve.append(round(equity, 4))
+                    peak_equity = max(peak_equity, equity)
+                    max_dd = min(max_dd, equity - peak_equity)
+                in_trade = False
+
+        if not in_trade and in_test:
+            try:
+                ind   = calculate_indicators(df_slice)
+                score = _calc_bar_score(ind)
+                if score >= min_score:
+                    atr = ind.get("atr") or bar_close * 0.02
+                    entry_price = bar_close
+                    stop_loss   = entry_price - atr * atr_stop_mult
+                    target      = entry_price + atr * atr_target_mult
+                    in_trade    = True
+                    entry_date  = bar_date
+                    entry_bar   = i
+                    entry_score = score
+            except Exception as e:
+                logger.debug("Backtest core error bar %d: %s", i, e)
+
+    if not trades:
+        return BacktestResult(
+            coin=coin, interval=interval, period_days=lookback,
+            n_trades=0, n_wins=0, n_losses=0, n_timeouts=0,
+            win_rate=0.0, avg_win_pct=0.0, avg_loss_pct=0.0,
+            avg_rr_achieved=0.0, total_return=0.0, max_drawdown=0.0,
+            best_trade=0.0, worst_trade=0.0, avg_bars_held=0.0,
+            trades=[], equity_curve=[0.0],
+        )
+
+    wins     = [t for t in trades if t.outcome == "win"]
+    losses   = [t for t in trades if t.outcome == "loss"]
+    timeouts = [t for t in trades if t.outcome == "timeout"]
+
+    win_rate     = len(wins) / len(trades)
+    avg_win      = sum(t.pnl_pct for t in wins)    / len(wins)    if wins    else 0.0
+    avg_loss     = sum(t.pnl_pct for t in losses)  / len(losses)  if losses  else 0.0
+    total_return = sum(t.pnl_pct for t in trades)
+    best_trade   = max(t.pnl_pct for t in trades)
+    worst_trade  = min(t.pnl_pct for t in trades)
+    avg_bars     = sum(t.bars_held for t in trades) / len(trades)
+
+    rr_list = []
+    for t in wins:
+        risk = (t.entry_price - t.stop_loss) / t.entry_price
+        if risk > 0:
+            rr_list.append(t.pnl_pct / risk)
+    avg_rr = sum(rr_list) / len(rr_list) if rr_list else 0.0
+
+    return BacktestResult(
+        coin=coin, interval=interval, period_days=lookback,
+        n_trades=len(trades), n_wins=len(wins),
+        n_losses=len(losses), n_timeouts=len(timeouts),
+        win_rate=win_rate, avg_win_pct=avg_win, avg_loss_pct=avg_loss,
+        avg_rr_achieved=avg_rr, total_return=total_return,
+        max_drawdown=max_dd, best_trade=best_trade,
+        worst_trade=worst_trade, avg_bars_held=avg_bars,
+        trades=trades, equity_curve=equity_curve,
+    )
+
+
+
 @dataclass
 class Trade:
     entry_date:  datetime
