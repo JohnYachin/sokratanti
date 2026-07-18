@@ -614,3 +614,136 @@ def portfolio_remove_by_coin(coin: str) -> int:
     except Exception as e:
         logger.error("portfolio_remove_by_coin error: %s", e)
         return 0
+
+
+# ── Signal Trades (трекинг результатов) ──────────────────────────────────────
+
+def signal_trade_open(coin: str, signal_type: str, setup_score: int,
+                      entry_price: float, stop_loss: float,
+                      target1: float, target2: float | None,
+                      leverage: int) -> int:
+    """Сохраняет новый открытый сигнал. Возвращает ID."""
+    try:
+        if _use_postgres():
+            conn = _get_pg_conn(); cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO signal_trades
+                  (coin, signal_type, setup_score, entry_price, stop_loss,
+                   target1, target2, leverage)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
+            """, (coin, signal_type, setup_score, entry_price, stop_loss,
+                  target1, target2, leverage))
+            row_id = cur.fetchone()[0]
+            conn.commit(); cur.close(); conn.close()
+            return row_id
+        else:
+            import sqlite3, os
+            db_path = os.getenv("SQLITE_PATH", "sokratanti.db")
+            conn = sqlite3.connect(db_path); cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO signal_trades
+                  (coin, signal_type, setup_score, entry_price, stop_loss,
+                   target1, target2, leverage)
+                VALUES (?,?,?,?,?,?,?,?)
+            """, (coin, signal_type, setup_score, entry_price, stop_loss,
+                  target1, target2, leverage))
+            row_id = cur.lastrowid
+            conn.commit(); conn.close()
+            return row_id
+    except Exception as e:
+        logger.error("signal_trade_open error: %s", e)
+        return -1
+
+
+def signal_trade_close(trade_id: int, status: str, exit_price: float,
+                       pnl_pct: float, pnl_lev_pct: float,
+                       outcome_note: str = "") -> bool:
+    """Закрывает сигнал с результатом. status: 'win'/'loss'/'timeout'."""
+    try:
+        if _use_postgres():
+            conn = _get_pg_conn(); cur = conn.cursor()
+            cur.execute("""
+                UPDATE signal_trades SET
+                  status=%, exit_price=%s, pnl_pct=%s, pnl_lev_pct=%s,
+                  outcome_note=%s, closed_at=NOW()
+                WHERE id=%s
+            """, (status, exit_price, pnl_pct, pnl_lev_pct, outcome_note, trade_id))
+            conn.commit(); cur.close(); conn.close()
+        else:
+            import sqlite3, os
+            db_path = os.getenv("SQLITE_PATH", "sokratanti.db")
+            conn = sqlite3.connect(db_path); cur = conn.cursor()
+            cur.execute("""
+                UPDATE signal_trades SET
+                  status=?, exit_price=?, pnl_pct=?, pnl_lev_pct=?,
+                  outcome_note=?, closed_at=datetime('now')
+                WHERE id=?
+            """, (status, exit_price, pnl_pct, pnl_lev_pct, outcome_note, trade_id))
+            conn.commit(); conn.close()
+        return True
+    except Exception as e:
+        logger.error("signal_trade_close error: %s", e)
+        return False
+
+
+def signal_trades_get_open() -> list[dict]:
+    """Возвращает все незакрытые сигналы."""
+    try:
+        cols = ("id", "coin", "signal_type", "setup_score", "entry_price",
+                "stop_loss", "target1", "target2", "leverage", "created_at")
+        if _use_postgres():
+            conn = _get_pg_conn(); cur = conn.cursor()
+            cur.execute(
+                "SELECT id,coin,signal_type,setup_score,entry_price,"
+                "stop_loss,target1,target2,leverage,created_at "
+                "FROM signal_trades WHERE status='open' ORDER BY created_at"
+            )
+            rows = cur.fetchall(); cur.close(); conn.close()
+        else:
+            import sqlite3, os
+            db_path = os.getenv("SQLITE_PATH", "sokratanti.db")
+            conn = sqlite3.connect(db_path); cur = conn.cursor()
+            cur.execute(
+                "SELECT id,coin,signal_type,setup_score,entry_price,"
+                "stop_loss,target1,target2,leverage,created_at "
+                "FROM signal_trades WHERE status='open' ORDER BY created_at"
+            )
+            rows = cur.fetchall(); conn.close()
+        return [dict(zip(cols, r)) for r in rows]
+    except Exception as e:
+        logger.error("signal_trades_get_open error: %s", e)
+        return []
+
+
+def signal_trades_get_recent(limit: int = 10) -> list[dict]:
+    """Возвращает последние закрытые сигналы для статистики."""
+    try:
+        cols = ("id", "coin", "signal_type", "setup_score", "entry_price",
+                "exit_price", "pnl_pct", "pnl_lev_pct", "leverage",
+                "status", "outcome_note", "created_at", "closed_at")
+        if _use_postgres():
+            conn = _get_pg_conn(); cur = conn.cursor()
+            cur.execute(
+                "SELECT id,coin,signal_type,setup_score,entry_price,"
+                "exit_price,pnl_pct,pnl_lev_pct,leverage,status,"
+                "outcome_note,created_at,closed_at "
+                "FROM signal_trades WHERE status!='open' "
+                "ORDER BY closed_at DESC LIMIT %s", (limit,)
+            )
+            rows = cur.fetchall(); cur.close(); conn.close()
+        else:
+            import sqlite3, os
+            db_path = os.getenv("SQLITE_PATH", "sokratanti.db")
+            conn = sqlite3.connect(db_path); cur = conn.cursor()
+            cur.execute(
+                "SELECT id,coin,signal_type,setup_score,entry_price,"
+                "exit_price,pnl_pct,pnl_lev_pct,leverage,status,"
+                "outcome_note,created_at,closed_at "
+                "FROM signal_trades WHERE status!='open' "
+                "ORDER BY closed_at DESC LIMIT ?", (limit,)
+            )
+            rows = cur.fetchall(); conn.close()
+        return [dict(zip(cols, r)) for r in rows]
+    except Exception as e:
+        logger.error("signal_trades_get_recent error: %s", e)
+        return []
