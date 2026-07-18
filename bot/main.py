@@ -17,6 +17,12 @@ from bot.handlers import (
     cmd_analyze,
     cmd_scan,
 )
+from bot.portfolio_handlers import (
+    cmd_portfolio,
+    cmd_add,
+    cmd_remove,
+    cmd_remove_id,
+)
 from bot.scheduler import schedule_jobs
 from db.database import init_db
 
@@ -54,6 +60,11 @@ def main():
     app.add_handler(CommandHandler("news", cmd_news))
     app.add_handler(CommandHandler("analyze", cmd_analyze))
     app.add_handler(CommandHandler("scan", cmd_scan))
+    # Portfolio
+    app.add_handler(CommandHandler("portfolio", cmd_portfolio))
+    app.add_handler(CommandHandler("add", cmd_add))
+    app.add_handler(CommandHandler("remove", cmd_remove))
+    app.add_handler(CommandHandler("remove_id", cmd_remove_id))
 
     # --- Автоматические отчёты ---
     schedule_jobs(app)
