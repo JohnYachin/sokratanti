@@ -564,3 +564,58 @@ async def cmd_params(update: Update, context: ContextTypes.DEFAULT_TYPE):
     coin = (context.args[0] if context.args else "btc").lower()
     text = format_params_report(coin)
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
+
+# ── /results ─────────────────────────────────────────────────────────────────
+@auth_required
+async def cmd_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /results — статистика результатов всех сигналов бота.
+    Показывает последние 20 сделок: вход, выход, P&L с плечом, win rate.
+    """
+    from db.database import signal_trades_get_recent
+
+    trades = signal_trades_get_recent(limit=20)
+
+    if not trades:
+        await update.message.reply_text(
+            "📊 <b>Статистика сигналов</b>\n\n"
+            "Нет закрытых сделок. Сигналы отслеживаются автоматически — "
+            "результат придёт когда цена достигнет цели или стопа.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    wins     = [t for t in trades if t["status"] == "win"]
+    losses   = [t for t in trades if t["status"] == "loss"]
+    timeouts = [t for t in trades if t["status"] == "timeout"]
+    win_rate = len(wins) / (len(wins) + len(losses)) * 100 if (wins or losses) else 0.0
+
+    total_lev_pnl = sum(float(t["pnl_lev_pct"] or 0) for t in trades if t["status"] in ("win","loss"))
+
+    header = (
+        f"📊 <b>Статистика сигналов</b> (последние {len(trades)})\n\n"
+        f"✅ Побед:    {len(wins)}\n"
+        f"❌ Потерь:   {len(losses)}\n"
+        f"⏱ Таймаут:  {len(timeouts)}\n"
+        f"🎯 Win Rate: <b>{win_rate:.0f}%</b>\n"
+        f"💰 Суммарный P&L (с плечом): <code>{total_lev_pnl:+.1f}%</code>\n\n"
+        f"<b>Последние сделки:</b>\n"
+    )
+
+    rows = []
+    for t in trades[:10]:
+        icon   = "✅" if t["status"]=="win" else ("❌" if t["status"]=="loss" else "⏱")
+        ep     = float(t.get("entry_price") or 0)
+        xp     = float(t.get("exit_price") or 0)
+        pnl    = float(t.get("pnl_lev_pct") or 0)
+        lev    = int(t.get("leverage") or 1)
+        sign   = "+" if pnl >= 0 else ""
+        rows.append(
+            f"{icon} <b>{t['coin'].upper()}</b> ×{lev}  "
+            f"<code>${ep:,.2f}→${xp:,.2f}</code>  "
+            f"<code>{sign}{pnl:.1f}%</code>"
+        )
+
+    text = header + "\n".join(rows)
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
