@@ -399,3 +399,122 @@ def record_alert(idempotency_key: str, coin: str, signal: str, price_usd: float)
             conn.commit(); conn.close()
     except Exception as e:
         logger.error("record_alert error: %s", e)
+
+
+# ── Portfolio CRUD ─────────────────────────────────────────────────────────────
+
+def portfolio_add(coin: str, quantity: float, buy_price: float, notes: str = "") -> int:
+    """
+    Добавляет позицию в портфель.
+    Returns: id новой записи
+    """
+    coin = coin.lower()
+    try:
+        if _use_postgres():
+            conn = _get_pg_conn()
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO portfolio (coin, quantity, buy_price, notes) "
+                "VALUES (%s, %s, %s, %s) RETURNING id",
+                (coin, quantity, buy_price, notes)
+            )
+            row_id = cur.fetchone()[0]
+            conn.commit(); cur.close(); conn.close()
+            return row_id
+        else:
+            db_path = os.getenv("SQLITE_PATH", "sokratanti.db")
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO portfolio (coin, quantity, buy_price, notes) VALUES (?, ?, ?, ?)",
+                (coin, quantity, buy_price, notes)
+            )
+            row_id = cur.lastrowid
+            conn.commit(); conn.close()
+            return row_id
+    except Exception as e:
+        logger.error("portfolio_add error: %s", e)
+        return -1
+
+
+def portfolio_remove(entry_id: int) -> bool:
+    """Удаляет запись по id. Returns True если удалено."""
+    try:
+        if _use_postgres():
+            conn = _get_pg_conn()
+            cur = conn.cursor()
+            cur.execute("DELETE FROM portfolio WHERE id = %s", (entry_id,))
+            deleted = cur.rowcount > 0
+            conn.commit(); cur.close(); conn.close()
+            return deleted
+        else:
+            db_path = os.getenv("SQLITE_PATH", "sokratanti.db")
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            cur.execute("DELETE FROM portfolio WHERE id = ?", (entry_id,))
+            deleted = cur.rowcount > 0
+            conn.commit(); conn.close()
+            return deleted
+    except Exception as e:
+        logger.error("portfolio_remove error: %s", e)
+        return False
+
+
+def portfolio_get_all() -> list[dict]:
+    """
+    Возвращает все позиции портфеля.
+    Returns: [{"id", "coin", "quantity", "buy_price", "buy_date", "notes"}, ...]
+    """
+    try:
+        if _use_postgres():
+            conn = _get_pg_conn()
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT id, coin, quantity, buy_price, buy_date, notes "
+                "FROM portfolio ORDER BY coin, created_at"
+            )
+            rows = cur.fetchall()
+            cur.close(); conn.close()
+        else:
+            db_path = os.getenv("SQLITE_PATH", "sokratanti.db")
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT id, coin, quantity, buy_price, buy_date, notes "
+                "FROM portfolio ORDER BY coin, created_at"
+            )
+            rows = cur.fetchall()
+            conn.close()
+
+        return [
+            {"id": r[0], "coin": r[1], "quantity": float(r[2]),
+             "buy_price": float(r[3]), "buy_date": str(r[4]), "notes": r[5] or ""}
+            for r in rows
+        ]
+    except Exception as e:
+        logger.error("portfolio_get_all error: %s", e)
+        return []
+
+
+def portfolio_remove_by_coin(coin: str) -> int:
+    """Удаляет ВСЕ позиции по монете. Returns количество удалённых записей."""
+    coin = coin.lower()
+    try:
+        if _use_postgres():
+            conn = _get_pg_conn()
+            cur = conn.cursor()
+            cur.execute("DELETE FROM portfolio WHERE coin = %s", (coin,))
+            count = cur.rowcount
+            conn.commit(); cur.close(); conn.close()
+            return count
+        else:
+            db_path = os.getenv("SQLITE_PATH", "sokratanti.db")
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            cur.execute("DELETE FROM portfolio WHERE coin = ?", (coin,))
+            count = cur.rowcount
+            conn.commit(); conn.close()
+            return count
+    except Exception as e:
+        logger.error("portfolio_remove_by_coin error: %s", e)
+        return 0
