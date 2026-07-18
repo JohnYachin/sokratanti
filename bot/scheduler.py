@@ -8,6 +8,7 @@ bot/scheduler.py — Планировщик v2.0
   - Алерты по новым статусам: BUY_ZONE, STRONG_SETUP, WATCH, EVENT_RISK
   - Авто-отчёт обновлён для нового формата сигналов (setup_score)
 """
+import asyncio
 import os
 import logging
 from telegram.ext import Application
@@ -63,7 +64,7 @@ async def _send_market_report(context):
     user_id = context.job.data["user_id"]
 
     try:
-        fg = get_fear_greed()
+        fg = await asyncio.to_thread(get_fear_greed)
         fg_line = f"{fg['emoji']} Fear &amp; Greed: <b>{fg['value']}/100</b> — {fg['label_ru']}\n"
     except Exception:
         fg_line = "Fear &amp; Greed: нет данных\n"
@@ -72,8 +73,8 @@ async def _send_market_report(context):
 
     for coin in TRACKED_COINS:
         try:
-            price_data = get_price(coin)
-            result = generate_signal(coin)
+            price_data = await asyncio.to_thread(get_price, coin)
+            result = await asyncio.to_thread(generate_signal, coin)
             ind = result["indicators"]
             ch = price_data["change_24h"]
             setup_score = result.get("setup_score", 0)
@@ -123,7 +124,7 @@ async def _check_signal_alerts(context):
 
     for coin in TRACKED_COINS:
         try:
-            result = generate_signal(coin)
+            result = await asyncio.to_thread(generate_signal, coin)
             status = result.get("status", "NO_EDGE")
 
             # Пропускаем нерелевантные статусы
