@@ -88,6 +88,17 @@ def _init_postgres():
             cooldown_until  TIMESTAMPTZ
         )
     """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS portfolio (
+            id          SERIAL PRIMARY KEY,
+            coin        VARCHAR(10) NOT NULL,
+            quantity    NUMERIC(20,8) NOT NULL,
+            buy_price   NUMERIC(16,4) NOT NULL,
+            buy_date    DATE DEFAULT CURRENT_DATE,
+            notes       TEXT,
+            created_at  TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
     conn.commit()
     cur.close()
     conn.close()
@@ -139,6 +150,17 @@ def _init_sqlite():
             price_usd       REAL,
             sent_at         TEXT DEFAULT (datetime('now')),
             cooldown_until  TEXT
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS portfolio (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            coin        TEXT NOT NULL,
+            quantity    REAL NOT NULL,
+            buy_price   REAL NOT NULL,
+            buy_date    TEXT DEFAULT (date('now')),
+            notes       TEXT,
+            created_at  TEXT DEFAULT (datetime('now'))
         )
     """)
     conn.commit()
