@@ -16,6 +16,7 @@ from bot.handlers import (
     cmd_news,
     cmd_analyze,
     cmd_scan,
+    cmd_backtest,
 )
 from bot.portfolio_handlers import (
     cmd_portfolio,
@@ -65,6 +66,8 @@ def main():
     app.add_handler(CommandHandler("add", cmd_add))
     app.add_handler(CommandHandler("remove", cmd_remove))
     app.add_handler(CommandHandler("remove_id", cmd_remove_id))
+    # Backtest
+    app.add_handler(CommandHandler("backtest", cmd_backtest))
 
     # --- Автоматические отчёты ---
     schedule_jobs(app)
