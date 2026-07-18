@@ -6,9 +6,8 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
-from data.coingecko import get_price, get_ohlcv
+from data.coingecko import get_price
 from data.feargreed import get_fear_greed
-from data.cryptopanic import get_news
 from data.perplexity import search_crypto_news, get_market_analysis
 from analysis.technical import calculate_indicators
 from analysis.signals import generate_signal
@@ -53,18 +52,18 @@ def auth_required(func):
 @auth_required
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
-        "🤖 <b>Sokratanti</b> — твой крипто-ассистент\n\n"
+        "🤖 <b>Sokratanti</b> — твой крипто-ассистент v2.0\n\n"
         "📋 <b>Команды:</b>\n"
         "/price <code>BTC</code> — текущая цена\n"
-        "/signal <code>BTC</code> — торговый сигнал (RSI + MACD + BB + F&G)\n"
+        "/signal <code>BTC</code> — торговый сигнал + зона входа + SL + цели\n"
         "/sentiment <code>BTC</code> — настроение рынка (AI)\n"
-        "/analyze <code>BTC</code> — анализ от Perplexity (реальный интернет)\n"
-        "/news <code>BTC</code> — свежие новости с CryptoPanic\n"
-        "/feargreed — индекс страха и жадности рынка\n"
+        "/analyze <code>BTC</code> — анализ от Perplexity\n"
+        "/news <code>BTC</code> — свежие новости (CoinDesk, CoinTelegraph и др.)\n"
+        "/feargreed — индекс страха и жадности\n"
         "/history — история последних сигналов\n"
         "/coins — список отслеживаемых монет\n\n"
         "💡 <b>Монеты:</b> BTC, ETH, SOL, BNB, DOGE\n\n"
-        "⏰ Авто-отчёты каждые 4 ч. | 🚨 Алерты при BUY/SELL"
+        "⏰ Авто-отчёты каждые 4 ч. | 🚨 Алерты при BUY_ZONE / STRONG_SETUP"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
@@ -106,12 +105,12 @@ async def cmd_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.edit_text(f"❌ Ошибка: <code>{e}</code>", parse_mode=ParseMode.HTML)
 
 
-# ── /signal ──────────────────────────────────────────────────────────────────
+# ── /signal ────────────────────────────────────────────────────────────────────────────
 @auth_required
 async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     coin = (context.args[0] if context.args else "btc").lower()
     msg = await update.message.reply_text(
-        f"⏳ Анализирую <b>{coin.upper()}</b>...", parse_mode=ParseMode.HTML
+        f"⏳ Анализирую <b>{coin.upper()}</b> (1d + 4h)...", parse_mode=ParseMode.HTML
     )
 
     try:
