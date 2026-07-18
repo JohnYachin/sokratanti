@@ -51,17 +51,25 @@ def schedule_jobs(app: Application):
         data={"user_id": user_id},
         name="signal_alerts",
     )
+    # Трекинг результатов каждый час
+    app.job_queue.run_repeating(
+        _check_signal_outcomes,
+        interval=3600,
+        first=300,
+        data={"user_id": user_id},
+        name="signal_outcomes",
+    )
     # Еженедельная авто-оптимизация (воскресенье 03:00 UTC)
     import datetime as _dt
     app.job_queue.run_daily(
         _weekly_optimize,
         time=_dt.time(3, 0, tzinfo=_dt.timezone.utc),
-        days=(6,),  # воскресенье
+        days=(6,),
         data={"user_id": user_id},
         name="weekly_optimize",
     )
     logger.info(
-        "Запланирован авто-отчёт каждые %.1f ч., алерты каждые 30 мин., оптимизация по воскресеньям.",
+        "Запланирован авто-отчёт каждые %.1f ч., алерты каждые 30 мин., трекинг каждый час, оптимизация по воскресеньям.",
         interval_hours,
     )
 
