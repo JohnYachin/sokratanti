@@ -7,10 +7,21 @@ from analysis.signals import generate_signal
 
 logger = logging.getLogger(__name__)
 
-TRACKED_COINS = ["btc", "eth", "sol", "bnb", "doge"]
+# 10 основных монет по капитализации
+TRACKED_COINS = [
+    "btc",   # Bitcoin
+    "eth",   # Ethereum
+    "bnb",   # BNB
+    "sol",   # Solana
+    "xrp",   # XRP
+    "doge",  # Dogecoin
+    "ada",   # Cardano
+    "avax",  # Avalanche
+    "link",  # Chainlink
+    "dot",   # Polkadot
+]
+COINS_TO_WATCH = TRACKED_COINS  # alias for compatibility
 
-# Максимально возможный score: RSI(2)+MACD(1)+BB(1)+F&G(2)+CP(1) = 7
-MAX_SCORE = 7
 
 
 def score_to_probability(score: int) -> int:
