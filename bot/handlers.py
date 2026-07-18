@@ -489,3 +489,78 @@ async def cmd_backtest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error("backtest error: %s", e)
         await msg.edit_text(f"❌ Ошибка: <code>{e}</code>", parse_mode=ParseMode.HTML)
+
+
+# ── /optimize ─────────────────────────────────────────────────────────────────
+@auth_required
+async def cmd_optimize(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /optimize [монета|all]
+    Запускает адаптивную оптимизацию: grid search параметров + анализ надёжности индикаторов.
+
+    /optimize btc      — только BTC
+    /optimize all      — все монеты (5-10 мин)
+    """
+    from analysis.optimizer import full_optimize
+    from analysis.scanner import COINS_TO_WATCH
+
+    args = context.args or []
+    target = args[0].lower() if args else "btc"
+
+    if target == "all":
+        coins = COINS_TO_WATCH
+        msg = await update.message.reply_text(
+            f"🧠 Запускаю полную оптимизацию для {len(coins)} монет...\n"
+            f"<i>Это займёт 5-10 минут. Результаты сразу применятся к сигналам.</i>",
+            parse_mode=ParseMode.HTML,
+        )
+        results = []
+        for coin in coins:
+            try:
+                res = await asyncio.to_thread(full_optimize, coin, "1d", 180)
+                results.append(f"✅ {coin.upper()}: {res['summary'].split(chr(10))[1]}")
+            except Exception as e:
+                results.append(f"❌ {coin.upper()}: {e}")
+            # Обновляем прогресс
+            done = len(results)
+            await msg.edit_text(
+                f"🧠 Оптимизация: {done}/{len(coins)}...\n" +
+                "\n".join(results[-3:]),
+                parse_mode=ParseMode.HTML,
+            )
+
+        await msg.edit_text(
+            f"🎓 <b>Оптимизация завершена ({len(coins)} монет)</b>\n\n" +
+            "\n".join(results) +
+            "\n\n<i>Новые веса применяются при следующем /signal или /scan</i>",
+            parse_mode=ParseMode.HTML,
+        )
+    else:
+        coin = target
+        msg = await update.message.reply_text(
+            f"🧠 Оптимизирую <b>{coin.upper()}</b>...\n"
+            f"<i>Grid search 36 комбинаций + анализ надёжности индикаторов</i>",
+            parse_mode=ParseMode.HTML,
+        )
+        try:
+            res = await asyncio.to_thread(full_optimize, coin, "1d", 180)
+            await msg.edit_text(
+                f"🎓 <b>Оптимизация {coin.upper()} завершена</b>\n\n"
+                f"{res['summary']}\n\n"
+                f"<i>Новые веса применяются при следующем /signal</i>\n"
+                f"Параметры: /params {coin}",
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception as e:
+            logger.error("optimize error: %s", e)
+            await msg.edit_text(f"❌ Ошибка оптимизации: <code>{e}</code>", parse_mode=ParseMode.HTML)
+
+
+# ── /params ───────────────────────────────────────────────────────────────────
+@auth_required
+async def cmd_params(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/params BTC — показывает оптимальные параметры и надёжность индикаторов."""
+    from analysis.optimizer import format_params_report
+    coin = (context.args[0] if context.args else "btc").lower()
+    text = format_params_report(coin)
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
