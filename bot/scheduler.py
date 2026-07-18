@@ -185,3 +185,43 @@ async def _check_signal_alerts(context):
 
         except Exception as e:
             logger.error("Алерт-ошибка для %s: %s", coin, e)
+
+
+# ── Еженедельная авто-оптимизация ────────────────────────────────────────────
+async def _weekly_optimize(context):
+    """
+    Запускается каждое воскресенье 03:00 UTC.
+    Прогоняет grid search + indicator analysis для всех монет.
+    Результаты сохраняются в БД и применяются автоматически к сигналам.
+    """
+    from analysis.optimizer import full_optimize
+
+    user_id = context.job.data["user_id"]
+    logger.info("=== Еженедельная авто-оптимизация STARTED ===")
+
+    results = []
+    for coin in TRACKED_COINS:
+        try:
+            res = await asyncio.to_thread(full_optimize, coin, "1d", 180)
+            line = res["summary"].split("\n")[1] if res["summary"] else "OK"
+            results.append(f"✅ {coin.upper()}: {line}")
+            logger.info("Weekly optimize %s: OK", coin.upper())
+        except Exception as e:
+            results.append(f"❌ {coin.upper()}: {e}")
+            logger.error("Weekly optimize %s: %s", coin.upper(), e)
+
+    report = (
+        "🎓 <b>Авто-оптимизация завершена</b>\n\n" +
+        "\n".join(results) +
+        "\n\n<i>Параметры применяются к следующим сигналам. /params BTC для деталей.</i>"
+    )
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=report,
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as e:
+        logger.error("Weekly optimize report send: %s", e)
+
+    logger.info("=== Еженедельная авто-оптимизация DONE ===")
