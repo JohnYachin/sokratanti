@@ -99,6 +99,34 @@ def _init_postgres():
             created_at  TIMESTAMPTZ DEFAULT NOW()
         )
     """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS optimized_params (
+            coin        VARCHAR(10) NOT NULL,
+            interval    VARCHAR(5)  NOT NULL,
+            min_score   INTEGER,
+            atr_stop    NUMERIC(4,2),
+            atr_target  NUMERIC(4,2),
+            max_hold    INTEGER,
+            win_rate    NUMERIC(5,3),
+            avg_rr      NUMERIC(6,3),
+            n_trades    INTEGER,
+            quality     NUMERIC(8,4),
+            lookback    INTEGER,
+            updated_at  TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (coin, interval)
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS indicator_weights (
+            coin        VARCHAR(10) NOT NULL,
+            indicator   VARCHAR(30) NOT NULL,
+            wins        INTEGER DEFAULT 0,
+            losses      INTEGER DEFAULT 0,
+            weight_adj  NUMERIC(6,2) DEFAULT 0,
+            updated_at  TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (coin, indicator)
+        )
+    """)
     conn.commit()
     cur.close()
     conn.close()
@@ -161,6 +189,34 @@ def _init_sqlite():
             buy_date    TEXT DEFAULT (date('now')),
             notes       TEXT,
             created_at  TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS optimized_params (
+            coin        TEXT NOT NULL,
+            interval    TEXT NOT NULL,
+            min_score   INTEGER,
+            atr_stop    REAL,
+            atr_target  REAL,
+            max_hold    INTEGER,
+            win_rate    REAL,
+            avg_rr      REAL,
+            n_trades    INTEGER,
+            quality     REAL,
+            lookback    INTEGER,
+            updated_at  TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (coin, interval)
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS indicator_weights (
+            coin        TEXT NOT NULL,
+            indicator   TEXT NOT NULL,
+            wins        INTEGER DEFAULT 0,
+            losses      INTEGER DEFAULT 0,
+            weight_adj  REAL DEFAULT 0,
+            updated_at  TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (coin, indicator)
         )
     """)
     conn.commit()
