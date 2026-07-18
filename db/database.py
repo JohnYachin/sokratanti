@@ -100,6 +100,26 @@ def _init_postgres():
         )
     """)
     cur.execute("""
+        CREATE TABLE IF NOT EXISTS signal_trades (
+            id            SERIAL PRIMARY KEY,
+            coin          VARCHAR(10) NOT NULL,
+            signal_type   VARCHAR(20) NOT NULL,
+            setup_score   INTEGER,
+            entry_price   NUMERIC(20,6),
+            stop_loss     NUMERIC(20,6),
+            target1       NUMERIC(20,6),
+            target2       NUMERIC(20,6),
+            leverage      INTEGER DEFAULT 1,
+            status        VARCHAR(15) DEFAULT 'open',
+            exit_price    NUMERIC(20,6),
+            pnl_pct       NUMERIC(8,4),
+            pnl_lev_pct   NUMERIC(8,4),
+            outcome_note  TEXT,
+            created_at    TIMESTAMPTZ DEFAULT NOW(),
+            closed_at     TIMESTAMPTZ
+        )
+    """)
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS optimized_params (
             coin        VARCHAR(10) NOT NULL,
             interval    VARCHAR(5)  NOT NULL,
@@ -189,6 +209,26 @@ def _init_sqlite():
             buy_date    TEXT DEFAULT (date('now')),
             notes       TEXT,
             created_at  TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS signal_trades (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            coin          TEXT NOT NULL,
+            signal_type   TEXT NOT NULL,
+            setup_score   INTEGER,
+            entry_price   REAL,
+            stop_loss     REAL,
+            target1       REAL,
+            target2       REAL,
+            leverage      INTEGER DEFAULT 1,
+            status        TEXT DEFAULT 'open',
+            exit_price    REAL,
+            pnl_pct       REAL,
+            pnl_lev_pct   REAL,
+            outcome_note  TEXT,
+            created_at    TEXT DEFAULT (datetime('now')),
+            closed_at     TEXT
         )
     """)
     cur.execute("""
