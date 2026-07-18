@@ -19,6 +19,7 @@ from bot.handlers import (
     cmd_backtest,
     cmd_optimize,
     cmd_params,
+    cmd_results,
 )
 from bot.portfolio_handlers import (
     cmd_portfolio,
@@ -73,6 +74,7 @@ def main():
     # Adaptive Learning
     app.add_handler(CommandHandler("optimize", cmd_optimize))
     app.add_handler(CommandHandler("params", cmd_params))
+    app.add_handler(CommandHandler("results", cmd_results))
 
     # --- Автоматические отчёты ---
     schedule_jobs(app)
