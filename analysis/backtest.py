@@ -306,43 +306,6 @@ def run_backtest(
         max_hold_bars=eff_max_hold,
     )
 
-    timeouts = [t for t in trades if t.outcome == "timeout"]
-
-    win_rate       = len(wins) / len(trades)
-    avg_win        = sum(t.pnl_pct for t in wins) / len(wins) if wins else 0.0
-    avg_loss       = sum(t.pnl_pct for t in losses) / len(losses) if losses else 0.0
-    total_return   = sum(t.pnl_pct for t in trades)
-    best_trade     = max(t.pnl_pct for t in trades)
-    worst_trade    = min(t.pnl_pct for t in trades)
-    avg_bars       = sum(t.bars_held for t in trades) / len(trades)
-
-    # Реализованный R/R для wins: (win_pct) / abs(stop_dist / entry)
-    rr_list = []
-    for t in wins:
-        risk = (t.entry_price - t.stop_loss) / t.entry_price
-        if risk > 0:
-            rr_list.append(t.pnl_pct / risk)
-    avg_rr = sum(rr_list) / len(rr_list) if rr_list else 0.0
-
-    return BacktestResult(
-        coin=coin, interval=interval, period_days=lookback,
-        n_trades=len(trades),
-        n_wins=len(wins),
-        n_losses=len(losses),
-        n_timeouts=len(timeouts),
-        win_rate=win_rate,
-        avg_win_pct=avg_win,
-        avg_loss_pct=avg_loss,
-        avg_rr_achieved=avg_rr,
-        total_return=total_return,
-        max_drawdown=max_dd,
-        best_trade=best_trade,
-        worst_trade=worst_trade,
-        avg_bars_held=avg_bars,
-        trades=trades,
-        equity_curve=equity_curve,
-    )
-
 
 def format_backtest(result: BacktestResult) -> str:
     """Форматирует результат для Telegram (HTML)."""
