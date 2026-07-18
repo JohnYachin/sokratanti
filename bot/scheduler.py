@@ -16,7 +16,10 @@ from telegram.constants import ParseMode
 
 logger = logging.getLogger(__name__)
 
-TRACKED_COINS = ["btc", "eth", "sol", "bnb", "doge"]
+TRACKED_COINS = [
+    "btc", "eth", "bnb", "sol", "xrp",
+    "doge", "ada", "avax", "link", "dot",
+]
 
 # Статусы, по которым шлём алерт
 ALERT_STATUSES = {"STRONG_SETUP", "BUY_ZONE", "EVENT_RISK"}
@@ -48,17 +51,25 @@ def schedule_jobs(app: Application):
         data={"user_id": user_id},
         name="signal_alerts",
     )
+    # Трекинг результатов каждый час
+    app.job_queue.run_repeating(
+        _check_signal_outcomes,
+        interval=3600,
+        first=300,
+        data={"user_id": user_id},
+        name="signal_outcomes",
+    )
     # Еженедельная авто-оптимизация (воскресенье 03:00 UTC)
     import datetime as _dt
     app.job_queue.run_daily(
         _weekly_optimize,
         time=_dt.time(3, 0, tzinfo=_dt.timezone.utc),
-        days=(6,),  # воскресенье
+        days=(6,),
         data={"user_id": user_id},
         name="weekly_optimize",
     )
     logger.info(
-        "Запланирован авто-отчёт каждые %.1f ч., алерты каждые 30 мин., оптимизация по воскресеньям.",
+        "Запланирован авто-отчёт каждые %.1f ч., алерты каждые 30 мин., трекинг каждый час, оптимизация по воскресеньям.",
         interval_hours,
     )
 
@@ -127,7 +138,8 @@ async def _check_signal_alerts(context):
     """
     from data.coingecko import get_price
     from analysis.signals import generate_signal
-    from db.database import alert_already_sent, record_alert
+    from analysis.leverage import recommend_leverage, format_trade_signal
+    from db.database import alert_already_sent, record_alert, signal_trade_open
 
     user_id = context.job.data["user_id"]
 
@@ -136,11 +148,9 @@ async def _check_signal_alerts(context):
             result = await asyncio.to_thread(generate_signal, coin)
             status = result.get("status", "NO_EDGE")
 
-            # Пропускаем нерелевантные статусы
             if status not in ALERT_STATUSES:
                 continue
 
-            # Идемпотентный ключ: монета + статус + час UTC
             from datetime import datetime, timezone
             hour_key = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H")
             idem_key = f"{coin}:{status}:{hour_key}"
@@ -149,42 +159,74 @@ async def _check_signal_alerts(context):
                 logger.debug("Алерт %s уже отправлен, пропускаем", idem_key)
                 continue
 
-            # Формируем сообщение
+            # Цена и торговый план
             price_data = await asyncio.to_thread(get_price, coin)
-            price = price_data["price_usd"]
-            ch = price_data["change_24h"]
-            ind = result["indicators"]
+            price      = price_data["price_usd"]
+            ch         = price_data.get("change_24h", 0.0)
             setup_score = result.get("setup_score", 0)
-            label_ru = result.get("label_ru", status)
-
-            reasons_html = "\n".join(f"  • {r}" for r in result["reasons"][:5])
-
-            text = (
-                f"🚨 <b>АЛЕРТ: {coin.upper()} → {result['emoji']} {label_ru}</b>\n"
-                f"Setup Score: <code>{setup_score}/100</code>\n\n"
-                f"💵 Цена: <code>${price:,.4f}</code> "
-                f"({'📈' if ch >= 0 else '📉'} {ch:+.1f}%)\n\n"
-                f"📝 <b>Анализ:</b>\n{reasons_html}\n"
-            )
-
-            # Торговый план
             plan = result.get("trading_plan")
+
+            # Строим сообщение с плечом
             if plan and plan.setup_valid:
-                from analysis.risk import format_trading_plan
-                text += "\n" + format_trading_plan(plan, coin)
+                entry_low  = float(plan.entry_low)
+                entry_high = float(plan.entry_high)
+                stop       = float(plan.stop_loss)
+                t1         = float(plan.target1)
+                t2         = float(plan.target2) if plan.target2 else None
+                entry_mid  = (entry_low + entry_high) / 2
+
+                lev_data = recommend_leverage(setup_score, entry_mid, stop, t1, t2)
+
+                # Краткие причины
+                reasons_short = result["reasons"][:4]
+
+                text = format_trade_signal(
+                    coin=coin,
+                    setup_score=setup_score,
+                    signal_status=result.get("label_ru", status),
+                    emoji=result.get("emoji", "📊"),
+                    entry_low=entry_low,
+                    entry_high=entry_high,
+                    stop=stop,
+                    target1=t1,
+                    target2=t2,
+                    lev_data=lev_data,
+                    notes=reasons_short,
+                )
+
+                # Сохраняем в БД для трекинга
+                trade_id = signal_trade_open(
+                    coin=coin,
+                    signal_type=status,
+                    setup_score=setup_score,
+                    entry_price=entry_mid,
+                    stop_loss=stop,
+                    target1=t1,
+                    target2=t2,
+                    leverage=lev_data["leverage"],
+                )
+                logger.info("Signal trade saved: id=%d %s %s lev=%dx",
+                            trade_id, coin.upper(), status, lev_data["leverage"])
+            else:
+                # Нет плана — упрощённый алерт
+                reasons_html = "\n".join(f"  • {r}" for r in result["reasons"][:5])
+                text = (
+                    f"🚨 <b>АЛЕРТ: {coin.upper()} → {result['emoji']} {result.get('label_ru', status)}</b>\n"
+                    f"Score: <code>{setup_score}/100</code>\n\n"
+                    f"💵 <code>${price:,.4f}</code> "
+                    f"({'📈' if ch >= 0 else '📉'} {ch:+.1f}%)\n\n"
+                    f"{reasons_html}"
+                )
 
             await context.bot.send_message(
-                chat_id=user_id,
-                text=text,
-                parse_mode=ParseMode.HTML,
+                chat_id=user_id, text=text, parse_mode=ParseMode.HTML,
             )
-
-            # Записываем в БД чтобы не спамить
             record_alert(idem_key, coin, status, price)
             logger.info("Алерт отправлен: %s → %s (score=%d)", coin.upper(), status, setup_score)
 
         except Exception as e:
             logger.error("Алерт-ошибка для %s: %s", coin, e)
+
 
 
 # ── Еженедельная авто-оптимизация ────────────────────────────────────────────
@@ -225,3 +267,91 @@ async def _weekly_optimize(context):
         logger.error("Weekly optimize report send: %s", e)
 
     logger.info("=== Еженедельная авто-оптимизация DONE ===")
+
+
+# ── Трекинг результатов сигналов ─────────────────────────────────────────────
+async def _check_signal_outcomes(context):
+    """
+    Запускается каждый час.
+    Для каждого открытого сигнала проверяет текущую цену:
+      - Достигнута цель 1 → WIN  → уведомление + закрытие
+      - Задет стоп       → LOSS → уведомление + закрытие
+      - Прошло > 15 дней → TIMEOUT → тихое закрытие
+    """
+    from data.coingecko import get_price
+    from db.database import signal_trades_get_open, signal_trade_close
+    from datetime import datetime, timezone
+
+    user_id      = context.job.data["user_id"]
+    open_signals = signal_trades_get_open()
+    if not open_signals:
+        return
+
+    logger.info("Outcome check: %d открытых сигналов", len(open_signals))
+
+    for sig in open_signals:
+        coin     = sig["coin"]
+        trade_id = sig["id"]
+        entry    = float(sig["entry_price"])
+        stop     = float(sig["stop_loss"])
+        t1       = float(sig["target1"])
+        t2       = float(sig["target2"]) if sig.get("target2") else None
+        leverage = int(sig.get("leverage", 1))
+        sig_type = sig["signal_type"]
+        created_at = sig["created_at"]
+
+        try:
+            price_data = await asyncio.to_thread(get_price, coin)
+            cur_price  = float(price_data["price_usd"])
+            pnl_pct     = (cur_price - entry) / entry
+            pnl_lev_pct = pnl_pct * leverage
+
+            outcome = None; exit_price = None; note = ""
+
+            if cur_price <= stop:
+                outcome = "loss"; exit_price = cur_price
+                note = f"Стоп задет: ${cur_price:,.4f}"
+            elif cur_price >= t1:
+                outcome = "win"; exit_price = cur_price
+                hit = "T2" if t2 and cur_price >= t2 else "T1"
+                note = f"{hit} достигнута: ${cur_price:,.4f}"
+            else:
+                try:
+                    if isinstance(created_at, str):
+                        created_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    else:
+                        created_dt = created_at
+                    if (datetime.now(timezone.utc) - created_dt).days >= 15:
+                        outcome = "timeout"; exit_price = cur_price
+                        note = f"Таймаут: ${cur_price:,.4f}"
+                except Exception:
+                    pass
+
+            if outcome is None:
+                continue
+
+            signal_trade_close(trade_id, outcome, exit_price,
+                               pnl_pct * 100, pnl_lev_pct * 100, note)
+
+            if outcome in ("win", "loss"):
+                sign = "+" if pnl_lev_pct >= 0 else ""
+                icon = "✅" if outcome == "win" else "❌"
+                text = (
+                    f"{icon} <b>Результат: {coin.upper()}</b>\n\n"
+                    f"{'🎯' if outcome=='win' else '🛑'} {note}\n\n"
+                    f"📊 Сигнал: <b>{sig_type}</b>\n"
+                    f"  Вход:  <code>${entry:,.4f}</code>\n"
+                    f"  Выход: <code>${exit_price:,.4f}</code>\n\n"
+                    f"💰 P&L без плеча:   <code>{'+' if pnl_pct>=0 else ''}{pnl_pct*100:.2f}%</code>\n"
+                    f"💥 P&L с плечом ×{leverage}: <code>{sign}{pnl_lev_pct*100:.2f}%</code>\n\n"
+                    f"<i>/results — вся статистика сигналов</i>"
+                )
+                await context.bot.send_message(
+                    chat_id=user_id, text=text, parse_mode=ParseMode.HTML,
+                )
+                logger.info("Outcome %s: %s %s pnl=%.1f%% lev×%d=%.1f%%",
+                            outcome, coin.upper(), sig_type,
+                            pnl_pct*100, leverage, pnl_lev_pct*100)
+
+        except Exception as e:
+            logger.error("Outcome check error %s #%d: %s", coin, trade_id, e)
