@@ -1,3 +1,13 @@
+"""
+bot/scheduler.py — Планировщик v2.0
+
+Изменения:
+  - _last_signals перенесён из RAM в БД (таблица alert_state)
+  - Алерты теперь идемпотентны: ключ coin:status:hour предотвращает повторы
+  - Cooldown 4 часа между алертами по одной монете
+  - Алерты по новым статусам: BUY_ZONE, STRONG_SETUP, WATCH, EVENT_RISK
+  - Авто-отчёт обновлён для нового формата сигналов (setup_score)
+"""
 import os
 import logging
 from telegram.ext import Application
@@ -7,8 +17,10 @@ logger = logging.getLogger(__name__)
 
 TRACKED_COINS = ["btc", "eth", "sol", "bnb", "doge"]
 
-# Хранит последний сигнал по каждой монете чтобы не спамить повторами
-_last_signals: dict[str, str] = {}
+# Статусы, по которым шлём алерт
+ALERT_STATUSES = {"STRONG_SETUP", "BUY_ZONE", "EVENT_RISK"}
+# Cooldown между алертами одной монеты (секунды)
+ALERT_COOLDOWN = 4 * 3600  # 4 часа
 
 
 def schedule_jobs(app: Application):
@@ -21,7 +33,6 @@ def schedule_jobs(app: Application):
     user_id = int(user_id_str)
     interval_hours = float(os.getenv("REPORT_INTERVAL_HOURS", "4"))
 
-    # Большой отчёт каждые N часов
     app.job_queue.run_repeating(
         _send_market_report,
         interval=interval_hours * 3600,
@@ -29,36 +40,35 @@ def schedule_jobs(app: Application):
         data={"user_id": user_id},
         name="market_report",
     )
-
-    # Алерты каждые 30 минут
     app.job_queue.run_repeating(
         _check_signal_alerts,
         interval=1800,
-        first=120,  # первый прогон через 2 минуты после старта
+        first=120,
         data={"user_id": user_id},
         name="signal_alerts",
     )
-
     logger.info(
         "Запланирован авто-отчёт каждые %.1f ч. и алерты каждые 30 мин.",
         interval_hours,
     )
 
 
-# ── Авто-отчёт ────────────────────────────────────────────────────────────────
+# ── Авто-отчёт ──────────────────────────────────────────────────────────────
 async def _send_market_report(context):
-    """Полный авто-отчёт по всем монетам."""
+    """Полный авто-отчёт по всем монетам с setup_score."""
     from data.coingecko import get_price
     from data.feargreed import get_fear_greed
     from analysis.signals import generate_signal
 
     user_id = context.job.data["user_id"]
 
-    fg = get_fear_greed()
-    lines = [
-        "⏰ <b>Авто-отчёт рынка</b>\n",
-        f"{fg['emoji']} Fear &amp; Greed: <b>{fg['value']}/100</b> — {fg['label_ru']}\n",
-    ]
+    try:
+        fg = get_fear_greed()
+        fg_line = f"{fg['emoji']} Fear &amp; Greed: <b>{fg['value']}/100</b> — {fg['label_ru']}\n"
+    except Exception:
+        fg_line = "Fear &amp; Greed: нет данных\n"
+
+    lines = ["⏰ <b>Авто-отчёт рынка</b>\n", fg_line]
 
     for coin in TRACKED_COINS:
         try:
@@ -66,16 +76,23 @@ async def _send_market_report(context):
             result = generate_signal(coin)
             ind = result["indicators"]
             ch = price_data["change_24h"]
+            setup_score = result.get("setup_score", 0)
+            label_ru = result.get("label_ru", result["signal"])
+
+            # Прогресс-бар setup score (5 символов)
+            filled = round(setup_score / 20)
+            bar = "█" * filled + "░" * (5 - filled)
 
             lines.append(
-                f"{result['emoji']} <b>{coin.upper()}</b> — {result['signal']}\n"
+                f"{result['emoji']} <b>{coin.upper()}</b> — {label_ru} "
+                f"<code>[{bar}]</code> {setup_score}/100\n"
                 f"   💵 <code>${price_data['price_usd']:,.2f}</code> "
                 f"({'📈' if ch >= 0 else '📉'} {ch:+.1f}%)\n"
                 f"   RSI: <code>{ind['rsi']:.1f}</code> | "
-                f"MACD: <code>{'▲' if ind['macd_diff'] > 0 else '▼'}</code>\n"
+                f"Тренд: {_trend_emoji(result.get('trend', 'unknown'))}\n"
             )
         except Exception as e:
-            logger.error("Ошибка для %s: %s", coin, e)
+            logger.error("Авто-отчёт: ошибка для %s: %s", coin, e)
             lines.append(f"⚠️ <b>{coin.upper()}</b>: ошибка данных\n")
 
     await context.bot.send_message(
@@ -85,50 +102,76 @@ async def _send_market_report(context):
     )
 
 
-# ── Алерты ────────────────────────────────────────────────────────────────────
+def _trend_emoji(trend: str) -> str:
+    return {"bullish": "📈", "bearish": "📉", "neutral": "➡️"}.get(trend, "❓")
+
+
+# ── Алерты (из БД, не из RAM) ───────────────────────────────────────────────
 async def _check_signal_alerts(context):
     """
-    Каждые 30 минут проверяет сигналы.
-    Отправляет уведомление только если сигнал сменился на BUY или SELL.
+    Каждые 30 минут проверяет сигналы по всем монетам.
+    Алерт отправляется только при:
+      1. Статус попал в ALERT_STATUSES
+      2. Этот статус не был отправлен за последние ALERT_COOLDOWN секунд
+    Состояние хранится в БД — переживает рестарты.
     """
     from data.coingecko import get_price
     from analysis.signals import generate_signal
+    from db.database import alert_already_sent, record_alert
 
     user_id = context.job.data["user_id"]
 
     for coin in TRACKED_COINS:
         try:
             result = generate_signal(coin)
-            signal = result["signal"]
-            prev = _last_signals.get(coin)
+            status = result.get("status", "NO_EDGE")
 
-            # Отправляем только при смене на BUY или SELL
-            if signal != prev and signal in ("BUY", "SELL"):
-                price_data = get_price(coin)
-                price = price_data["price_usd"]
-                ch = price_data["change_24h"]
-                ind = result["indicators"]
+            # Пропускаем нерелевантные статусы
+            if status not in ALERT_STATUSES:
+                continue
 
-                action = "🟢 ПОКУПАТЬ" if signal == "BUY" else "🔴 ПРОДАВАТЬ"
-                reasons_html = "\n".join(f"  • {r}" for r in result["reasons"])
+            # Идемпотентный ключ: монета + статус + час UTC
+            from datetime import datetime, timezone
+            hour_key = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H")
+            idem_key = f"{coin}:{status}:{hour_key}"
 
-                text = (
-                    f"🚨 <b>АЛЕРТ: {coin.upper()} → {action}</b>\n\n"
-                    f"💵 Цена: <code>${price:,.2f}</code> "
-                    f"({'📈' if ch >= 0 else '📉'} {ch:+.1f}%)\n\n"
-                    f"📊 <b>Причины:</b>\n{reasons_html}\n\n"
-                    f"🎯 Оценка: <code>{result['score']:+d}</code>\n"
-                    f"⏰ RSI: <code>{ind['rsi']:.1f}</code>"
-                )
+            if alert_already_sent(idem_key, cooldown_seconds=ALERT_COOLDOWN):
+                logger.debug("Алерт %s уже отправлен, пропускаем", idem_key)
+                continue
 
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text=text,
-                    parse_mode=ParseMode.HTML,
-                )
-                logger.info("Алерт отправлен: %s → %s", coin.upper(), signal)
+            # Формируем сообщение
+            price_data = get_price(coin)
+            price = price_data["price_usd"]
+            ch = price_data["change_24h"]
+            ind = result["indicators"]
+            setup_score = result.get("setup_score", 0)
+            label_ru = result.get("label_ru", status)
 
-            _last_signals[coin] = signal
+            reasons_html = "\n".join(f"  • {r}" for r in result["reasons"][:5])
+
+            text = (
+                f"🚨 <b>АЛЕРТ: {coin.upper()} → {result['emoji']} {label_ru}</b>\n"
+                f"Setup Score: <code>{setup_score}/100</code>\n\n"
+                f"💵 Цена: <code>${price:,.4f}</code> "
+                f"({'📈' if ch >= 0 else '📉'} {ch:+.1f}%)\n\n"
+                f"📝 <b>Анализ:</b>\n{reasons_html}\n"
+            )
+
+            # Торговый план
+            plan = result.get("trading_plan")
+            if plan and plan.setup_valid:
+                from analysis.risk import format_trading_plan
+                text += "\n" + format_trading_plan(plan, coin)
+
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=text,
+                parse_mode=ParseMode.HTML,
+            )
+
+            # Записываем в БД чтобы не спамить
+            record_alert(idem_key, coin, status, price)
+            logger.info("Алерт отправлен: %s → %s (score=%d)", coin.upper(), status, setup_score)
 
         except Exception as e:
             logger.error("Алерт-ошибка для %s: %s", coin, e)
