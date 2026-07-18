@@ -27,10 +27,10 @@ logger = logging.getLogger(__name__)
 # Минимум баров для прогрева индикаторов (EMA200 нужно 200+)
 WARMUP_BARS = 60
 # Таймаут позиции в барах
-MAX_HOLD_BARS = 15
+MAX_HOLD_BARS = 20
 # ATR мультипликаторы
-ATR_STOP_MULT   = 2.0
-ATR_TARGET_MULT = 3.5
+ATR_STOP_MULT   = 1.5
+ATR_TARGET_MULT = 2.5
 
 
 @dataclass
@@ -127,7 +127,7 @@ def run_backtest(
     coin: str,
     interval: str = "1d",
     lookback: int = 180,
-    min_score: int = 30,
+    min_score: int = 20,
 ) -> Optional[BacktestResult]:
     """
     Запускает бэктест.
