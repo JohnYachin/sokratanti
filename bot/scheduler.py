@@ -130,7 +130,8 @@ async def _check_signal_alerts(context):
     """
     from data.coingecko import get_price
     from analysis.signals import generate_signal
-    from db.database import alert_already_sent, record_alert
+    from analysis.leverage import recommend_leverage, format_trade_signal
+    from db.database import alert_already_sent, record_alert, signal_trade_open
 
     user_id = context.job.data["user_id"]
 
@@ -139,11 +140,9 @@ async def _check_signal_alerts(context):
             result = await asyncio.to_thread(generate_signal, coin)
             status = result.get("status", "NO_EDGE")
 
-            # Пропускаем нерелевантные статусы
             if status not in ALERT_STATUSES:
                 continue
 
-            # Идемпотентный ключ: монета + статус + час UTC
             from datetime import datetime, timezone
             hour_key = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H")
             idem_key = f"{coin}:{status}:{hour_key}"
@@ -152,42 +151,74 @@ async def _check_signal_alerts(context):
                 logger.debug("Алерт %s уже отправлен, пропускаем", idem_key)
                 continue
 
-            # Формируем сообщение
+            # Цена и торговый план
             price_data = await asyncio.to_thread(get_price, coin)
-            price = price_data["price_usd"]
-            ch = price_data["change_24h"]
-            ind = result["indicators"]
+            price      = price_data["price_usd"]
+            ch         = price_data.get("change_24h", 0.0)
             setup_score = result.get("setup_score", 0)
-            label_ru = result.get("label_ru", status)
-
-            reasons_html = "\n".join(f"  • {r}" for r in result["reasons"][:5])
-
-            text = (
-                f"🚨 <b>АЛЕРТ: {coin.upper()} → {result['emoji']} {label_ru}</b>\n"
-                f"Setup Score: <code>{setup_score}/100</code>\n\n"
-                f"💵 Цена: <code>${price:,.4f}</code> "
-                f"({'📈' if ch >= 0 else '📉'} {ch:+.1f}%)\n\n"
-                f"📝 <b>Анализ:</b>\n{reasons_html}\n"
-            )
-
-            # Торговый план
             plan = result.get("trading_plan")
+
+            # Строим сообщение с плечом
             if plan and plan.setup_valid:
-                from analysis.risk import format_trading_plan
-                text += "\n" + format_trading_plan(plan, coin)
+                entry_low  = float(plan.entry_low)
+                entry_high = float(plan.entry_high)
+                stop       = float(plan.stop_loss)
+                t1         = float(plan.target1)
+                t2         = float(plan.target2) if plan.target2 else None
+                entry_mid  = (entry_low + entry_high) / 2
+
+                lev_data = recommend_leverage(setup_score, entry_mid, stop, t1, t2)
+
+                # Краткие причины
+                reasons_short = result["reasons"][:4]
+
+                text = format_trade_signal(
+                    coin=coin,
+                    setup_score=setup_score,
+                    signal_status=result.get("label_ru", status),
+                    emoji=result.get("emoji", "📊"),
+                    entry_low=entry_low,
+                    entry_high=entry_high,
+                    stop=stop,
+                    target1=t1,
+                    target2=t2,
+                    lev_data=lev_data,
+                    notes=reasons_short,
+                )
+
+                # Сохраняем в БД для трекинга
+                trade_id = signal_trade_open(
+                    coin=coin,
+                    signal_type=status,
+                    setup_score=setup_score,
+                    entry_price=entry_mid,
+                    stop_loss=stop,
+                    target1=t1,
+                    target2=t2,
+                    leverage=lev_data["leverage"],
+                )
+                logger.info("Signal trade saved: id=%d %s %s lev=%dx",
+                            trade_id, coin.upper(), status, lev_data["leverage"])
+            else:
+                # Нет плана — упрощённый алерт
+                reasons_html = "\n".join(f"  • {r}" for r in result["reasons"][:5])
+                text = (
+                    f"🚨 <b>АЛЕРТ: {coin.upper()} → {result['emoji']} {result.get('label_ru', status)}</b>\n"
+                    f"Score: <code>{setup_score}/100</code>\n\n"
+                    f"💵 <code>${price:,.4f}</code> "
+                    f"({'📈' if ch >= 0 else '📉'} {ch:+.1f}%)\n\n"
+                    f"{reasons_html}"
+                )
 
             await context.bot.send_message(
-                chat_id=user_id,
-                text=text,
-                parse_mode=ParseMode.HTML,
+                chat_id=user_id, text=text, parse_mode=ParseMode.HTML,
             )
-
-            # Записываем в БД чтобы не спамить
             record_alert(idem_key, coin, status, price)
             logger.info("Алерт отправлен: %s → %s (score=%d)", coin.upper(), status, setup_score)
 
         except Exception as e:
             logger.error("Алерт-ошибка для %s: %s", coin, e)
+
 
 
 # ── Еженедельная авто-оптимизация ────────────────────────────────────────────
