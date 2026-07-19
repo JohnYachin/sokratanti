@@ -282,6 +282,18 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
     except Exception as e:
         logger.warning("Fear & Greed: %s", e)
 
+    # ── Binance Futures: фандинг + OI ────────────────────────────────────────
+    futures_ctx = {}
+    futures_score_adj = 0
+    try:
+        from market_data.binance_futures import get_futures_context
+        futures_ctx = get_futures_context(coin)
+        futures_score_adj = futures_ctx.get("signal_score_adj", 0)
+        for note in futures_ctx.get("notes", []):
+            reasons.append(f"[Futures] {note}")
+    except Exception as e:
+        logger.debug("Futures context: %s", e)
+
     # ── Новости ──────────────────────────────────────────────────────────────
     news_raw, news_reason, has_critical = _get_news_score(coin)
     if news_reason:
@@ -300,8 +312,12 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
         learned_weights=learned_weights,
     )
 
+    # Применяем поправку фьючерсного рынка
+    setup_score = max(0, min(100, setup_score + futures_score_adj))
+
     if has_critical:
         setup_score = max(setup_score - 30, 0)
+
 
     status, emoji, label_ru = _signal_status(setup_score, has_critical)
 
