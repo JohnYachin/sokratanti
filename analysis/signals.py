@@ -187,6 +187,7 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
     reasons = []
     ind_1d = {}
     ind_4h = {}
+    ind_1h = {}
 
     # ── 1d данные (обязательно) ──────────────────────────────────────────────
     df_1d = _get_ohlcv(coin, interval="1d", limit=200)
@@ -195,16 +196,20 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
 
     ind_1d = calculate_indicators(df_1d)
 
-    # Hard filter: минимум данных
     if ind_1d.get("rsi") is None:
         return _no_data_result(coin, "Недостаточно данных для расчёта RSI")
 
-    # ── 4h данные (опционально) ──────────────────────────────────────────────
+    # ── 4h данные (подтверждение тренда) ─────────────────────────────────────
     df_4h = _get_ohlcv(coin, interval="4h", limit=200)
     if df_4h is not None and not df_4h.empty:
         ind_4h = calculate_indicators(df_4h)
 
-    # ── Технический анализ 1d ────────────────────────────────────────────────
+    # ── 1h данные (тайминг входа) ─────────────────────────────────────────────
+    df_1h = _get_ohlcv(coin, interval="1h", limit=100)
+    if df_1h is not None and not df_1h.empty:
+        ind_1h = calculate_indicators(df_1h)
+
+    # ── Технический анализ 1d ─────────────────────────────────────────────────
     rsi_reason, rsi_score = interpret_rsi(ind_1d["rsi"])
     reasons.append(f"[1d] {rsi_reason}")
 
@@ -214,13 +219,11 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
     bb_reason, bb_score = interpret_bb(ind_1d.get("bb_pband"))
     reasons.append(f"[1d] {bb_reason}")
 
-    # ── Тренд по EMA ────────────────────────────────────────────────────────
     trend = get_trend_direction(ind_1d)
     trend_labels = {"bullish": "🟢 восходящий", "bearish": "🔴 нисходящий",
                     "neutral": "🟡 боковой", "unknown": "❓ не определён"}
     reasons.append(f"Тренд (EMA): {trend_labels.get(trend, trend)}")
 
-    # ── ADX — сила тренда ────────────────────────────────────────────────────
     adx = ind_1d.get("adx")
     if adx is not None:
         if adx >= 25:
@@ -245,13 +248,37 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
             macd_4h_r, _ = interpret_macd(macd_4h_diff)
             reasons.append(f"[4h] {macd_4h_r}")
 
+    # ── 1h тайминг ───────────────────────────────────────────────────────────
+    entry_timing = "neutral"  # "now" / "wait" / "neutral" / "overbought"
+    timing_reason = ""
+    if ind_1h:
+        rsi_1h = ind_1h.get("rsi")
+        macd_1h = ind_1h.get("macd_diff")
+        bb_1h   = ind_1h.get("bb_pband")
+        if rsi_1h is not None:
+            if rsi_1h <= 38:
+                entry_timing = "now"
+                timing_reason = f"1h RSI {rsi_1h:.0f} — перепродан, можно входить"
+            elif rsi_1h >= 65:
+                entry_timing = "overbought"
+                timing_reason = f"1h RSI {rsi_1h:.0f} — перекуплен, подожди отката"
+            elif macd_1h is not None and macd_1h > 0 and (bb_1h or 0.5) < 0.5:
+                entry_timing = "now"
+                timing_reason = f"1h MACD бычий + BB нижняя половина — хороший момент"
+            else:
+                entry_timing = "wait"
+                timing_reason = f"1h RSI {rsi_1h:.0f} — нейтрально, нет идеального входа"
+        reasons.append(f"[1h] {timing_reason}" if timing_reason else "[1h] нет данных")
+
     # ── Fear & Greed ─────────────────────────────────────────────────────────
     fg_score = 0
+    fg_label = ""
     try:
         from data.feargreed import get_fear_greed
         fg = get_fear_greed()
         fg_score = fg["score"]
-        reasons.append(f"Fear & Greed: {fg['value']}/100 {fg['label_ru']}")
+        fg_label = fg["label_ru"]
+        reasons.append(f"Fear & Greed: {fg['value']}/100 {fg_label}")
     except Exception as e:
         logger.warning("Fear & Greed: %s", e)
 
@@ -260,8 +287,7 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
     if news_reason:
         reasons.append(news_reason)
 
-    # ── Setup Score ──────────────────────────────────────────────────────────
-    # Загружаем выученные веса из БД (None если монета ещё не оптимизирована)
+    # ── Setup Score ───────────────────────────────────────────────────────────
     learned_weights = None
     try:
         from analysis.optimizer import get_learned_weights
@@ -274,22 +300,51 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
         learned_weights=learned_weights,
     )
 
-    # Hard override: критическое событие
     if has_critical:
         setup_score = max(setup_score - 30, 0)
 
     status, emoji, label_ru = _signal_status(setup_score, has_critical)
 
-    # Backward compat: старый signal BUY/SELL/HOLD
-    old_score = rsi_score + macd_score + bb_score + fg_score
-    if old_score >= 2:
-        signal = "BUY"
-    elif old_score <= -2:
-        signal = "SELL"
+    # ── Определяем ACTION (главный вывод) ────────────────────────────────────
+    # Это то что пользователь видит в первую очередь
+    if status == "EVENT_RISK":
+        action      = "НЕ ВХОДИТЬ"
+        action_icon = "🚨"
+        action_desc = "Критическое событие — высокий риск"
+    elif status == "STRONG_SETUP" and entry_timing == "now":
+        action      = "ПОКУПАТЬ СЕЙЧАС"
+        action_icon = "🟢"
+        action_desc = "Сильный сетап + 1h готов"
+    elif status == "STRONG_SETUP" and entry_timing in ("wait", "neutral"):
+        action      = "ГОТОВИТЬСЯ К ВХОДУ"
+        action_icon = "🟡"
+        action_desc = "Сетап сильный, жди 1h сигнала"
+    elif status == "STRONG_SETUP" and entry_timing == "overbought":
+        action      = "ЖДАТЬ ОТКАТА"
+        action_icon = "🟡"
+        action_desc = "Сильный сетап, но 1h перекуплен — жди"
+    elif status == "BUY_ZONE" and entry_timing == "now":
+        action      = "МОЖНО ВХОДИТЬ"
+        action_icon = "🟢"
+        action_desc = "Зона покупки + 1h подтверждает"
+    elif status == "BUY_ZONE":
+        action      = "НАБЛЮДАТЬ"
+        action_icon = "👀"
+        action_desc = "Зона покупки — жди 1h сигнала"
+    elif trend == "bearish" and setup_score < 35:
+        action      = "НЕ ВХОДИТЬ"
+        action_icon = "🔴"
+        action_desc = "Нисходящий тренд, нет сетапа"
     else:
-        signal = "HOLD"
+        action      = "НЕТ СИГНАЛА"
+        action_icon = "⚪"
+        action_desc = "Нейтральный рынок — наблюдаем"
 
-    # ── Торговый план (только для BUY_ZONE и выше) ──────────────────────────
+    # ── Backward compat ──────────────────────────────────────────────────────
+    old_score = rsi_score + macd_score + bb_score + fg_score
+    signal = "BUY" if old_score >= 2 else ("SELL" if old_score <= -2 else "HOLD")
+
+    # ── Торговый план ────────────────────────────────────────────────────────
     trading_plan = None
     if status in ("BUY_ZONE", "STRONG_SETUP", "WATCH"):
         try:
@@ -322,11 +377,13 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
         except Exception as e:
             logger.error("Sentiment error: %s", e)
 
-    # Объединяем индикаторы обоих TF
     indicators_combined = {**ind_1d}
     if ind_4h:
-        indicators_combined["rsi_4h"] = ind_4h.get("rsi")
+        indicators_combined["rsi_4h"]      = ind_4h.get("rsi")
         indicators_combined["macd_diff_4h"] = ind_4h.get("macd_diff")
+    if ind_1h:
+        indicators_combined["rsi_1h"]      = ind_1h.get("rsi")
+        indicators_combined["macd_diff_1h"] = ind_1h.get("macd_diff")
 
     return {
         "signal":        signal,
@@ -335,13 +392,21 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
         "setup_score":   setup_score,
         "status":        status,
         "label_ru":      label_ru,
+        "action":        action,
+        "action_icon":   action_icon,
+        "action_desc":   action_desc,
+        "entry_timing":  entry_timing,
+        "timing_reason": timing_reason,
         "reasons":       reasons,
         "indicators":    indicators_combined,
         "trading_plan":  trading_plan,
         "has_4h":        bool(ind_4h),
+        "has_1h":        bool(ind_1h),
         "sentiment_score": sentiment_score,
         "trend":         trend,
+        "fg_label":      fg_label,
     }
+
 
 
 def _no_data_result(coin: str, reason: str) -> dict:
