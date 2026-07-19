@@ -37,6 +37,8 @@ COIN_TO_SYMBOL: dict[str, str] = {
     "ada": "ADAUSDT", "cardano": "ADAUSDT",
     "avax": "AVAXUSDT", "avalanche-2": "AVAXUSDT",
     "ton": "TONUSDT",  "the-open-network": "TONUSDT",
+    "link": "LINKUSDT", "chainlink": "LINKUSDT",
+    "dot": "DOTUSDT",  "polkadot": "DOTUSDT",
 }
 
 # TTL кеша в секундах для каждого интервала
