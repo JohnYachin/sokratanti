@@ -209,25 +209,42 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
     if df_1h is not None and not df_1h.empty:
         ind_1h = calculate_indicators(df_1h)
 
-    # ── Технический анализ 1d ─────────────────────────────────────────────────
-    rsi_reason, rsi_score = interpret_rsi(ind_1d["rsi"])
-    reasons.append(f"[1d] {rsi_reason}")
-
-    macd_reason, macd_score = interpret_macd(ind_1d.get("macd_diff"))
-    reasons.append(f"[1d] {macd_reason}")
-
-    bb_reason, bb_score = interpret_bb(ind_1d.get("bb_pband"))
-    reasons.append(f"[1d] {bb_reason}")
-
+    # ── Тренд по EMA (определяем первым — нужен для RSI-интерпретации) ────────
     trend = get_trend_direction(ind_1d)
     trend_labels = {"bullish": "🟢 восходящий", "bearish": "🔴 нисходящий",
                     "neutral": "🟡 боковой", "unknown": "❓ не определён"}
     reasons.append(f"Тренд (EMA): {trend_labels.get(trend, trend)}")
 
+    # ── Технический анализ 1d — с учётом тренда ──────────────────────────────
+    # RSI интерпретируется в контексте тренда (bull support zone / bear resistance)
+    try:
+        from analysis.trading_rules import interpret_rsi_context
+        rsi_sig, rsi_desc = interpret_rsi_context(ind_1d["rsi"], trend)
+        reasons.append(f"[1d] {rsi_desc}")
+    except Exception:
+        rsi_reason, _ = interpret_rsi(ind_1d["rsi"])
+        reasons.append(f"[1d] {rsi_reason}")
+
+    rsi_reason, rsi_score = interpret_rsi(ind_1d["rsi"])  # backward compat for score
+
+    macd_reason, macd_score = interpret_macd(ind_1d.get("macd_diff"))
+    # Дополнительно: MACD zero-line crossover — самый сильный сигнал
+    macd_val = ind_1d.get("macd")
+    if macd_val is not None:
+        if macd_val > 0:
+            reasons.append("[1d] MACD выше нуля — бычья зона")
+        else:
+            reasons.append("[1d] MACD ниже нуля — медвежья зона")
+    reasons.append(f"[1d] {macd_reason}")
+
+    bb_reason, bb_score = interpret_bb(ind_1d.get("bb_pband"))
+    reasons.append(f"[1d] {bb_reason}")
+
     adx = ind_1d.get("adx")
     if adx is not None:
         if adx >= 25:
             reasons.append(f"ADX {adx:.1f} — сильный тренд")
+
         elif adx >= 20:
             reasons.append(f"ADX {adx:.1f} — умеренный тренд")
         else:
