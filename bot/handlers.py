@@ -122,54 +122,138 @@ async def cmd_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     coin = (context.args[0] if context.args else "btc").lower()
     msg = await update.message.reply_text(
-        f"⏳ Анализирую <b>{coin.upper()}</b> (1d + 4h)...", parse_mode=ParseMode.HTML
+        f"⏳ Анализирую <b>{coin.upper()}</b> (1h + 4h + 1d)...", parse_mode=ParseMode.HTML
     )
     try:
-        # Вся тяжёлая работа в thread — event loop свободен
         result = await asyncio.to_thread(generate_signal, coin)
-        ind = result["indicators"]
+        ind    = result["indicators"]
+        plan   = result.get("trading_plan")
+
+        # ── Цена ─────────────────────────────────────────────────────────────
+        try:
+            pd_ = await asyncio.to_thread(get_price, coin)
+            cur_price = pd_["price_usd"]
+            ch = pd_.get("change_24h", 0.0)
+            price_line = f"💵 <code>${cur_price:,.4f}</code>  {'📈' if ch>=0 else '📉'}{ch:+.1f}%"
+        except Exception:
+            cur_price = ind.get("price", 0)
+            price_line = f"💵 <code>${cur_price:,.4f}</code>"
+
+        # ── Форматирование цены ───────────────────────────────────────────────
+        def fp(v):
+            if v is None: return "—"
+            return f"${v:,.2f}" if v >= 1 else f"${v:.5f}"
+
+        # ── ACTION — главная строка ───────────────────────────────────────────
+        action      = result.get("action", "НЕТ СИГНАЛА")
+        action_icon = result.get("action_icon", "⚪")
+        action_desc = result.get("action_desc", "")
         setup_score = result.get("setup_score", 0)
-        label_ru = result.get("label_ru", "")
-        trend = result.get("trend", "unknown")
+        timing      = result.get("entry_timing", "neutral")
+        trend       = result.get("trend", "unknown")
+        status      = result.get("status", "NO_EDGE")
 
         filled = round(setup_score / 10)
-        bar = "█" * filled + "░" * (10 - filled)
+        bar    = "█" * filled + "░" * (10 - filled)
 
-        rsi_str   = f"{ind['rsi']:.1f}"       if ind.get("rsi")       is not None else "—"
-        macd_str  = f"{ind['macd_diff']:+.5f}" if ind.get("macd_diff") is not None else "—"
-        bb_str    = f"{ind['bb_pband']:.2f}"   if ind.get("bb_pband")  is not None else "—"
-        ema20_str = f"${ind['ema20']:,.2f}"    if ind.get("ema20")     is not None else "—"
-        ema50_str = f"${ind['ema50']:,.2f}"    if ind.get("ema50")     is not None else "—"
-        atr_str   = f"{ind['atr_pct']:.1f}%"  if ind.get("atr_pct")   is not None else "—"
-        adx_str   = f"{ind['adx']:.1f}"       if ind.get("adx")       is not None else "—"
-
-        trend_map = {
-            "bullish": "📈 восходящий", "bearish": "📉 нисходящий",
-            "neutral": "➡️ боковой",   "unknown": "❓ не определён",
+        trend_icon = {"bullish": "📈", "bearish": "📉", "neutral": "➡️"}.get(trend, "❓")
+        timing_icons = {
+            "now":        "🟢 СЕЙЧАС",
+            "wait":       "🕐 ЖДАТЬ",
+            "overbought": "⛔ ПЕРЕКУПЛЕН",
+            "neutral":    "🔘 НЕЙТРАЛЬНО",
         }
-        reasons_html = "\n".join(f"  • {r}" for r in result["reasons"])
+        timing_str = timing_icons.get(timing, "🔘")
 
+        # ── Торговый план ─────────────────────────────────────────────────────
+        plan_block = ""
+        lev_block  = ""
+        if plan and plan.setup_valid:
+            entry_mid = (plan.entry_low + plan.entry_high) / 2
+            # Атрибуты могут называться target_1 или target1
+            t1 = getattr(plan, "target_1", None) or getattr(plan, "target1", None)
+            t2 = getattr(plan, "target_2", None) or getattr(plan, "target2", None)
+
+            rr_str = f"1:{plan.risk_reward:.1f}" if plan.risk_reward else "—"
+
+            plan_block = (
+                f"\n💰 <b>ТОРГОВЫЙ ПЛАН:</b>\n"
+                f"  📥 Вход:    <code>{fp(plan.entry_low)} — {fp(plan.entry_high)}</code>\n"
+                f"  🛑 Стоп:    <code>{fp(plan.stop_loss)}</code>  "
+                f"(<code>-{plan.risk_pct:.1f}%</code>)\n"
+                f"  🎯 Цель 1:  <code>{fp(t1)}</code>  (R/R {rr_str})\n"
+            )
+            if t2:
+                plan_block += f"  🎯 Цель 2:  <code>{fp(t2)}</code>\n"
+            if getattr(plan, "chase_limit", None):
+                plan_block += f"  ⛔ Не входить выше: <code>{fp(plan.chase_limit)}</code>\n"
+
+            # Плечо
+            try:
+                from analysis.leverage import recommend_leverage
+                lev_data = recommend_leverage(setup_score, entry_mid, plan.stop_loss, t1 or entry_mid*1.05, t2)
+                lev = lev_data["leverage"]
+                lev_icon = "🟢" if lev <= 2 else ("🟡" if lev <= 3 else "🔴")
+                lev_block = (
+                    f"\n{lev_icon} <b>ПЛЕЧО: {lev}x</b>  |  {lev_data['confidence']}\n"
+                    f"  Риск со стопом:  <code>-{lev_data['risk_lev_pct']:.1f}%</code>\n"
+                    f"  Доход T1:        <code>+{lev_data['reward1_lev']:.1f}%</code>\n"
+                    f"  Маржа (2% риск): ~<code>{lev_data['margin_pct']:.0f}%</code> депо\n"
+                )
+            except Exception:
+                lev_block = ""
+        else:
+            plan_block = (
+                f"\n💰 <b>УРОВНИ:</b>\n"
+                f"  EMA20: <code>{fp(ind.get('ema20'))}</code>  "
+                f"  EMA50: <code>{fp(ind.get('ema50'))}</code>\n"
+                f"  BB нижняя: <code>{fp(ind.get('bb_low'))}</code>  "
+                f"  BB верхняя: <code>{fp(ind.get('bb_high'))}</code>\n"
+            )
+
+        # ── Индикаторы коротко ────────────────────────────────────────────────
+        rsi_1d  = ind.get("rsi")
+        rsi_4h  = ind.get("rsi_4h")
+        rsi_1h  = ind.get("rsi_1h")
+        macd_d  = ind.get("macd_diff")
+        adx_v   = ind.get("adx")
+
+        def rsi_color(v):
+            if v is None: return "—"
+            if v <= 30: return f"🔵{v:.0f}"  # перепродан
+            if v >= 70: return f"🔴{v:.0f}"  # перекуплен
+            return f"{v:.0f}"
+
+        ind_block = (
+            f"\n📊 <b>Индикаторы:</b>\n"
+            f"  RSI   1d/4h/1h: <code>{rsi_color(rsi_1d)} / {rsi_color(rsi_4h)} / {rsi_color(rsi_1h)}</code>\n"
+            f"  MACD  1d: <code>{'▲' if (macd_d or 0)>0 else '▼'} {macd_d:+.5f}</code>\n"
+            f"  ADX:  <code>{adx_v:.1f}</code>  {trend_icon} тренд: {trend}\n"
+        ) if macd_d is not None else ""
+
+        # ── Ключевой вывод ────────────────────────────────────────────────────
+        if status in ("STRONG_SETUP", "BUY_ZONE"):
+            when_block = (
+                f"\n⏰ <b>КОГДА ВХОДИТЬ:</b>\n"
+                f"  1h тайминг: {timing_str}\n"
+                f"  <i>{result.get('timing_reason', '')}</i>\n"
+            )
+        elif status in ("EVENT_RISK",):
+            when_block = f"\n⚠️ <b>Дождись окончания события перед входом</b>\n"
+        else:
+            when_block = f"\n⏳ <b>Пока нет сигнала</b> — наблюдаем. Score нужно {55-setup_score} баллов до BUY_ZONE.\n"
+
+        # ── Сборка ────────────────────────────────────────────────────────────
         text = (
-            f"{result['emoji']} <b>{coin.upper()}: {label_ru}</b>\n"
-            f"<code>[{bar}]</code> <b>{setup_score}/100</b>\n\n"
-            f"📊 <b>Индикаторы (1d):</b>\n"
-            f"  RSI:      <code>{rsi_str}</code>\n"
-            f"  MACD:     <code>{macd_str}</code>\n"
-            f"  BB поз.:  <code>{bb_str}</code> (0=низ, 1=верх)\n"
-            f"  EMA20:    <code>{ema20_str}</code>\n"
-            f"  EMA50:    <code>{ema50_str}</code>\n"
-            f"  ATR:      <code>{atr_str}</code>\n"
-            f"  ADX:      <code>{adx_str}</code>\n"
-            f"  Тренд:    {trend_map.get(trend, trend)}\n\n"
-            f"📝 <b>Анализ:</b>\n{reasons_html}\n"
+            f"{action_icon} <b>{coin.upper()}: {action}</b>\n"
+            f"<code>[{bar}]</code> {setup_score}/100  |  {price_line}\n"
+            f"<i>{action_desc}</i>\n"
+            f"{plan_block}"
+            f"{lev_block}"
+            f"{when_block}"
+            f"{ind_block}"
+            f"\n<i>⚠️ Аналитика, не торговый совет. Ставь стоп-лосс.</i>"
         )
-
-        plan = result.get("trading_plan")
-        if plan is not None:
-            from analysis.risk import format_trading_plan
-            text += "\n" + format_trading_plan(plan, coin)
-        elif result.get("status") in ("NO_EDGE", "DATA_INSUFFICIENT"):
-            text += "\n⏳ <i>Нет чёткого торгового преимущества — жди сигнала</i>"
 
         try:
             save_signal(
