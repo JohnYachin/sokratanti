@@ -438,6 +438,7 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
         "sentiment_score": sentiment_score,
         "trend":         trend,
         "fg_label":      fg_label,
+        "futures_ctx":   futures_ctx,
     }
 
 
