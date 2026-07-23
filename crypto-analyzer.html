@@ -1,348 +1,209 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Crypto Analyzer — Топ 30 монет</title>
-  <meta name="description" content="Анализ топ-30 криптовалют: сигналы LONG и SHORT, RSI, тренд, объём."/>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+  <meta name="description" content="Анализ топ-30 криптовалют: точки входа, выхода, стоп-лосс, сигналы LONG/SHORT."/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
-      --bg: #090e1a;
-      --surface: #111827;
-      --surface2: #1a2235;
-      --border: #1f2d45;
-      --text: #e8edf5;
-      --muted: #6b7a99;
-      --long: #00d084;
-      --long-bg: rgba(0, 208, 132, 0.1);
-      --short: #ff4560;
-      --short-bg: rgba(255, 69, 96, 0.1);
-      --neutral: #f0b429;
-      --neutral-bg: rgba(240, 180, 41, 0.1);
-      --accent: #3b82f6;
-      --accent2: #8b5cf6;
+      --bg: #060b16;
+      --surface: #0d1525;
+      --surface2: #141f35;
+      --surface3: #1a2840;
+      --border: #1e2d47;
+      --text: #e2e8f5;
+      --muted: #5a6a8a;
+      --long: #00e096;
+      --long-dim: rgba(0,224,150,.12);
+      --short: #ff3d5a;
+      --short-dim: rgba(255,61,90,.12);
+      --neutral: #f5a623;
+      --neutral-dim: rgba(245,166,35,.12);
+      --accent: #4f8eff;
+      --tp: #00c9a7;
+      --sl: #ff5370;
+      --entry: #a78bfa;
     }
+    body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
 
-    body {
-      font-family: 'Inter', sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-    }
-
-    /* ── HEADER ── */
+    /* HEADER */
     header {
-      background: linear-gradient(135deg, #0d1b35 0%, #0a0f1e 100%);
+      background: linear-gradient(135deg,#0a1428,#060b16);
       border-bottom: 1px solid var(--border);
-      padding: 20px 32px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      position: sticky;
-      top: 0;
-      z-index: 100;
-      backdrop-filter: blur(12px);
+      padding: 18px 28px;
+      display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: 0; z-index: 200;
     }
+    .logo { font-size: 20px; font-weight: 900; background: linear-gradient(90deg,#4f8eff,#a78bfa,#00e096); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .logo-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .header-right { display: flex; align-items: center; gap: 14px; }
+    .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--long); animation: pulse 1.2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.8)} }
+    .update-info { font-size: 11px; color: var(--muted); }
+    .btn { padding: 8px 18px; border-radius: 8px; border: none; font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; transition: all .2s; }
+    .btn-primary { background: linear-gradient(135deg,#4f8eff,#a78bfa); color: #fff; }
+    .btn-primary:hover { opacity: .85; transform: translateY(-1px); }
+    .btn-primary:disabled { opacity: .4; transform: none; cursor: not-allowed; }
 
-    .header-left h1 {
-      font-size: 22px;
-      font-weight: 800;
-      background: linear-gradient(90deg, #3b82f6, #8b5cf6);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }
-
-    .header-left p {
-      font-size: 12px;
-      color: var(--muted);
-      margin-top: 2px;
-    }
-
-    .header-right {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-    }
-
-    #last-update {
-      font-size: 12px;
-      color: var(--muted);
-    }
-
-    .refresh-btn {
-      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-      border: none;
-      border-radius: 8px;
-      color: white;
-      font-size: 13px;
-      font-weight: 600;
-      padding: 8px 18px;
-      cursor: pointer;
-      transition: opacity .2s, transform .1s;
-    }
-    .refresh-btn:hover { opacity: .85; }
-    .refresh-btn:active { transform: scale(.97); }
-    .refresh-btn:disabled { opacity: .5; cursor: not-allowed; }
-
-    /* ── STATS BAR ── */
+    /* STATS */
     .stats-bar {
-      display: flex;
-      gap: 16px;
-      padding: 16px 32px;
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
-      overflow-x: auto;
+      display: grid; grid-template-columns: repeat(6,1fr);
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 0; overflow: hidden;
     }
-
-    .stat-card {
-      flex: 0 0 auto;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 10px 18px;
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      min-width: 120px;
+    .stat-item {
+      padding: 14px 16px; border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; gap: 3px;
     }
+    .stat-item:last-child { border-right: none; }
+    .stat-l { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; }
+    .stat-v { font-size: 22px; font-weight: 800; line-height: 1; }
+    .sv-long { color: var(--long); }
+    .sv-short { color: var(--short); }
+    .sv-neutral { color: var(--neutral); }
+    .sv-accent { color: var(--accent); }
+    .sv-text { font-size: 13px; font-weight: 600; color: var(--text); }
 
-    .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
-    .stat-value { font-size: 20px; font-weight: 700; }
-    .stat-value.long  { color: var(--long); }
-    .stat-value.short { color: var(--short); }
-    .stat-value.neutral { color: var(--neutral); }
-    .stat-value.total { color: var(--accent); }
+    /* FILTERS */
+    .toolbar { padding: 14px 28px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; background: var(--surface); border-bottom: 1px solid var(--border); }
+    .filter-pill { padding: 5px 16px; border-radius: 20px; border: 1px solid var(--border); background: var(--surface2); color: var(--muted); font-size: 12px; font-weight: 500; cursor: pointer; transition: all .15s; font-family: 'Inter',sans-serif; }
+    .filter-pill:hover { color: var(--text); border-color: var(--accent); }
+    .filter-pill.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+    .filter-pill.fl { background: var(--long-dim); border-color: var(--long); color: var(--long); font-weight: 700; }
+    .filter-pill.fs { background: var(--short-dim); border-color: var(--short); color: var(--short); font-weight: 700; }
+    .sep { width: 1px; height: 20px; background: var(--border); }
+    .sort-label { font-size: 11px; color: var(--muted); }
 
-    /* ── FILTERS ── */
-    .filters {
-      padding: 16px 32px;
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      align-items: center;
-    }
+    /* GRID */
+    .grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(340px,1fr)); gap: 14px; padding: 18px 28px 48px; }
 
-    .filter-btn {
-      padding: 6px 16px;
-      border-radius: 20px;
-      border: 1px solid var(--border);
-      background: var(--surface2);
-      color: var(--muted);
-      font-size: 13px;
-      cursor: pointer;
-      transition: all .2s;
-      font-family: 'Inter', sans-serif;
-    }
-    .filter-btn:hover { border-color: var(--accent); color: var(--text); }
-    .filter-btn.active { background: var(--accent); border-color: var(--accent); color: white; font-weight: 600; }
-    .filter-btn.long-active  { background: var(--long); border-color: var(--long); color: #000; font-weight: 700; }
-    .filter-btn.short-active { background: var(--short); border-color: var(--short); color: white; font-weight: 700; }
-
-    /* ── GRID ── */
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-      gap: 16px;
-      padding: 16px 32px 40px;
-    }
-
+    /* CARD */
     .coin-card {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 18px;
-      cursor: pointer;
-      transition: transform .2s, box-shadow .2s, border-color .2s;
-      position: relative;
+      border-radius: 16px;
       overflow: hidden;
+      transition: transform .2s, box-shadow .2s, border-color .2s;
     }
+    .coin-card:hover { transform: translateY(-2px); box-shadow: 0 16px 48px rgba(0,0,0,.6); border-color: #2a3d5e; }
+    .card-top-bar { height: 4px; }
+    .card-top-bar.long  { background: linear-gradient(90deg,#00e096,#00b374); }
+    .card-top-bar.short { background: linear-gradient(90deg,#ff3d5a,#cc2040); }
+    .card-top-bar.neutral { background: linear-gradient(90deg,#f5a623,#c8830a); }
 
-    .coin-card::before {
-      content: '';
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      height: 3px;
-      border-radius: 14px 14px 0 0;
-    }
-    .coin-card.long::before  { background: linear-gradient(90deg, var(--long), #00b368); }
-    .coin-card.short::before { background: linear-gradient(90deg, var(--short), #cc2040); }
-    .coin-card.neutral::before { background: linear-gradient(90deg, var(--neutral), #c8930a); }
+    .card-body { padding: 16px; }
 
-    .coin-card:hover {
-      transform: translateY(-3px);
-      box-shadow: 0 12px 40px rgba(0,0,0,.5);
-      border-color: #2a3a5a;
-    }
+    /* coin header */
+    .coin-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+    .coin-left { display: flex; align-items: center; gap: 10px; }
+    .coin-img { width: 40px; height: 40px; border-radius: 50%; background: var(--surface2); display: flex; align-items: center; justify-content: center; overflow: hidden; flex-shrink: 0; }
+    .coin-img img { width: 36px; height: 36px; border-radius: 50%; }
+    .coin-nm { font-size: 15px; font-weight: 700; }
+    .coin-sym { font-size: 11px; color: var(--muted); text-transform: uppercase; }
+    .coin-rank-badge { font-size: 10px; background: var(--surface2); color: var(--muted); padding: 1px 6px; border-radius: 4px; display: inline-block; margin-top: 2px; }
 
-    /* card header */
-    .card-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 14px;
-    }
+    .sig-badge { display: flex; align-items: center; gap: 5px; padding: 6px 14px; border-radius: 22px; font-size: 13px; font-weight: 800; letter-spacing: .4px; }
+    .sig-badge.long  { background: var(--long-dim); color: var(--long); border: 1px solid rgba(0,224,150,.25); }
+    .sig-badge.short { background: var(--short-dim); color: var(--short); border: 1px solid rgba(255,61,90,.25); }
+    .sig-badge.neutral { background: var(--neutral-dim); color: var(--neutral); border: 1px solid rgba(245,166,35,.25); }
+    .sig-arrow { font-size: 16px; }
 
-    .coin-info { display: flex; align-items: center; gap: 10px; }
+    /* price */
+    .price-row { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
+    .big-price { font-size: 24px; font-weight: 800; }
+    .ch-pill { font-size: 13px; font-weight: 600; padding: 3px 10px; border-radius: 8px; }
+    .ch-up   { background: var(--long-dim);  color: var(--long); }
+    .ch-down { background: var(--short-dim); color: var(--short); }
 
-    .coin-icon {
-      width: 38px; height: 38px;
-      border-radius: 50%;
+    /* ENTRY / EXIT LEVELS — main feature */
+    .levels-section {
       background: var(--surface2);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 20px;
-      flex-shrink: 0;
-    }
-
-    .coin-icon img { width: 34px; height: 34px; border-radius: 50%; }
-
-    .coin-name { font-size: 15px; font-weight: 700; }
-    .coin-symbol { font-size: 12px; color: var(--muted); text-transform: uppercase; margin-top: 1px; }
-    .coin-rank { font-size: 10px; color: var(--muted); margin-top: 2px; }
-
-    /* signal badge */
-    .signal-badge {
-      padding: 5px 12px;
-      border-radius: 20px;
-      font-size: 13px;
-      font-weight: 800;
-      letter-spacing: .5px;
-      display: flex; align-items: center; gap: 4px;
-    }
-    .signal-badge.long  { background: var(--long-bg); color: var(--long); border: 1px solid rgba(0,208,132,.3); }
-    .signal-badge.short { background: var(--short-bg); color: var(--short); border: 1px solid rgba(255,69,96,.3); }
-    .signal-badge.neutral { background: var(--neutral-bg); color: var(--neutral); border: 1px solid rgba(240,180,41,.3); }
-
-    /* price row */
-    .price-row {
-      display: flex;
-      align-items: baseline;
-      gap: 10px;
-      margin-bottom: 14px;
-    }
-    .price { font-size: 22px; font-weight: 700; }
-    .change {
-      font-size: 14px;
-      font-weight: 600;
-      padding: 2px 8px;
-      border-radius: 6px;
-    }
-    .change.up   { background: var(--long-bg); color: var(--long); }
-    .change.down { background: var(--short-bg); color: var(--short); }
-
-    /* metrics grid */
-    .metrics {
-      display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
-      gap: 8px;
-      margin-bottom: 14px;
-    }
-
-    .metric {
-      background: var(--surface2);
-      border-radius: 8px;
-      padding: 8px 10px;
-    }
-    .metric-label { font-size: 10px; color: var(--muted); margin-bottom: 3px; text-transform: uppercase; letter-spacing: .4px; }
-    .metric-value { font-size: 13px; font-weight: 600; }
-    .metric-value.green { color: var(--long); }
-    .metric-value.red   { color: var(--short); }
-    .metric-value.yellow { color: var(--neutral); }
-
-    /* RSI bar */
-    .rsi-section { margin-bottom: 12px; }
-    .rsi-label-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
-    .rsi-label { font-size: 11px; color: var(--muted); }
-    .rsi-val   { font-size: 13px; font-weight: 700; }
-
-    .rsi-bar {
-      height: 6px;
-      background: var(--surface2);
-      border-radius: 3px;
-      position: relative;
-      overflow: visible;
-    }
-    .rsi-fill {
-      height: 100%;
-      border-radius: 3px;
-      transition: width .6s ease;
-    }
-    .rsi-marker {
-      position: absolute;
-      top: -3px;
-      width: 12px; height: 12px;
-      border-radius: 50%;
-      border: 2px solid var(--bg);
-      transform: translateX(-50%);
-      transition: left .6s ease;
-    }
-
-    /* reason tags */
-    .reasons {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 5px;
-    }
-    .reason-tag {
-      font-size: 10px;
-      padding: 2px 8px;
-      border-radius: 10px;
-      background: var(--surface2);
-      color: var(--muted);
       border: 1px solid var(--border);
-    }
-
-    /* ── SKELETON ── */
-    .skeleton {
-      background: linear-gradient(90deg, var(--surface) 25%, var(--surface2) 50%, var(--surface) 75%);
-      background-size: 200% 100%;
-      animation: shimmer 1.4s infinite;
-      border-radius: 8px;
-    }
-    @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
-
-    .skeleton-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 18px;
-      height: 240px;
-    }
-
-    /* ── ERROR ── */
-    .error-banner {
-      margin: 32px;
-      padding: 20px 24px;
-      background: rgba(255,69,96,.1);
-      border: 1px solid rgba(255,69,96,.3);
       border-radius: 12px;
-      color: var(--short);
-      text-align: center;
-      font-size: 14px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
     }
+    .levels-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin-bottom: 10px; }
 
-    /* ── COUNTDOWN ── */
-    .countdown {
-      font-size: 11px;
-      color: var(--muted);
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .countdown-dot {
-      width: 6px; height: 6px;
-      border-radius: 50%;
-      background: var(--long);
-      animation: pulse 1s infinite;
-    }
-    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+    .level-row { display: flex; align-items: center; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid var(--border); }
+    .level-row:last-child { border-bottom: none; }
+    .level-left { display: flex; align-items: center; gap: 8px; }
+    .level-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .level-name { font-size: 12px; color: var(--muted); font-weight: 500; }
+    .level-price { font-size: 14px; font-weight: 700; }
+    .level-pct   { font-size: 11px; color: var(--muted); }
 
-    @media (max-width: 600px) {
-      header { padding: 14px 16px; }
-      .stats-bar, .filters, .grid { padding-left: 16px; padding-right: 16px; }
+    .lc-entry   { background: var(--entry); }
+    .lc-tp1     { background: var(--tp); }
+    .lc-tp2     { background: #00a88d; }
+    .lc-sl      { background: var(--sl); }
+
+    .lp-entry   { color: var(--entry); }
+    .lp-tp      { color: var(--tp); }
+    .lp-sl      { color: var(--sl); }
+
+    /* rr badge */
+    .rr-badge { display: inline-flex; align-items: center; gap: 4px; background: var(--surface3); border-radius: 6px; padding: 3px 8px; font-size: 11px; font-weight: 600; color: var(--text); margin-top: 8px; }
+    .rr-good { color: var(--long); }
+    .rr-bad  { color: var(--short); }
+
+    /* RSI */
+    .rsi-wrap { margin-bottom: 12px; }
+    .rsi-head { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 11px; color: var(--muted); }
+    .rsi-num  { font-size: 13px; font-weight: 700; }
+    .rsi-track { height: 6px; background: var(--surface3); border-radius: 3px; position: relative; }
+    .rsi-fill  { height: 100%; border-radius: 3px; }
+    .rsi-thumb { position: absolute; top: -4px; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--bg); transform: translateX(-50%); }
+    /* zone lines */
+    .rsi-track::before,
+    .rsi-track::after { content: ''; position: absolute; top: -3px; width: 1px; height: 12px; background: rgba(255,255,255,.1); }
+    .rsi-track::before { left: 30%; }
+    .rsi-track::after  { left: 70%; }
+
+    /* metrics */
+    .metrics { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; margin-bottom: 12px; }
+    .metric { background: var(--surface2); border-radius: 8px; padding: 8px 10px; }
+    .m-lbl { font-size: 9px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 3px; }
+    .m-val { font-size: 12px; font-weight: 600; }
+    .mc-g { color: var(--long); }
+    .mc-r { color: var(--short); }
+    .mc-y { color: var(--neutral); }
+    .mc-p { color: var(--entry); }
+
+    /* tags */
+    .tags { display: flex; flex-wrap: wrap; gap: 4px; }
+    .tag { font-size: 10px; padding: 2px 8px; border-radius: 10px; background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
+
+    /* skeleton */
+    .skeleton-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; height: 400px; overflow: hidden; }
+    .skeleton-inner { height: 100%; background: linear-gradient(90deg,var(--surface) 25%,var(--surface2) 50%,var(--surface) 75%); background-size: 200% 100%; animation: sh 1.4s infinite; }
+    @keyframes sh { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+
+    /* error */
+    .error-box { grid-column: 1/-1; text-align: center; padding: 60px 24px; }
+    .error-box h3 { color: var(--short); font-size: 18px; margin-bottom: 8px; }
+    .error-box p { color: var(--muted); font-size: 13px; }
+
+    /* countdown */
+    .countdown { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+
+    /* notif toast */
+    .notif-bar { position: fixed; bottom: 24px; right: 24px; z-index: 999; display: flex; flex-direction: column; gap: 8px; }
+    .notif-toast { background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; max-width: 300px; box-shadow: 0 8px 32px rgba(0,0,0,.6); animation: slideIn .3s ease; }
+    @keyframes slideIn { from{transform:translateX(120%);opacity:0} to{transform:translateX(0);opacity:1} }
+    .notif-toast.out { animation: slideOut .3s ease forwards; }
+    @keyframes slideOut { to{transform:translateX(120%);opacity:0} }
+    .nt-head { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+    .nt-body { font-size: 13px; font-weight: 600; }
+    .nt-body.long  { color: var(--long); }
+    .nt-body.short { color: var(--short); }
+
+    @media(max-width:600px) {
+      header,.toolbar,.grid { padding-left:14px; padding-right:14px; }
+      .stats-bar { grid-template-columns: repeat(3,1fr); }
       .grid { grid-template-columns: 1fr; }
     }
   </style>
@@ -350,36 +211,41 @@
 <body>
 
 <header>
-  <div class="header-left">
-    <h1>🚀 Crypto Analyzer</h1>
-    <p>Топ-30 монет · Сигналы LONG / SHORT · Обновляется каждые 60 сек</p>
+  <div>
+    <div class="logo">🚀 Crypto Analyzer</div>
+    <div class="logo-sub">Топ-30 монет · LONG/SHORT · Точки входа и выхода · Уведомления каждый час</div>
   </div>
   <div class="header-right">
-    <div class="countdown" id="countdown">
-      <div class="countdown-dot"></div>
-      <span id="countdown-text">Загрузка...</span>
-    </div>
-    <span id="last-update"></span>
-    <button class="refresh-btn" id="refresh-btn" onclick="loadData()">⟳ Обновить</button>
+    <div class="live-dot"></div>
+    <div class="countdown"><span id="cd">—</span></div>
+    <div class="update-info" id="upd-time"></div>
+    <button class="btn btn-primary" id="refresh-btn" onclick="loadData()">⟳ Обновить</button>
   </div>
 </header>
 
-<div class="stats-bar" id="stats-bar">
-  <div class="stat-card"><div class="stat-label">Всего монет</div><div class="stat-value total" id="stat-total">—</div></div>
-  <div class="stat-card"><div class="stat-label">LONG сигналов</div><div class="stat-value long" id="stat-long">—</div></div>
-  <div class="stat-card"><div class="stat-label">SHORT сигналов</div><div class="stat-value short" id="stat-short">—</div></div>
-  <div class="stat-card"><div class="stat-label">Нейтральных</div><div class="stat-value neutral" id="stat-neutral">—</div></div>
-  <div class="stat-card"><div class="stat-label">Доминанта рынка</div><div class="stat-value" id="stat-dom" style="font-size:14px;color:var(--text)">—</div></div>
+<div class="stats-bar">
+  <div class="stat-item"><div class="stat-l">Монет</div><div class="stat-v sv-accent" id="st-total">—</div></div>
+  <div class="stat-item"><div class="stat-l">LONG</div><div class="stat-v sv-long" id="st-long">—</div></div>
+  <div class="stat-item"><div class="stat-l">SHORT</div><div class="stat-v sv-short" id="st-short">—</div></div>
+  <div class="stat-item"><div class="stat-l">Нейтрально</div><div class="stat-v sv-neutral" id="st-neutral">—</div></div>
+  <div class="stat-item"><div class="stat-l">Лучший LONG</div><div class="stat-v sv-text" id="st-best-long" style="font-size:13px">—</div></div>
+  <div class="stat-item"><div class="stat-l">Лучший SHORT</div><div class="stat-v sv-text" id="st-best-short" style="font-size:13px">—</div></div>
 </div>
 
-<div class="filters">
-  <button class="filter-btn active" id="f-all"   onclick="setFilter('all')">Все 30</button>
-  <button class="filter-btn"        id="f-long"  onclick="setFilter('long')">📈 LONG</button>
-  <button class="filter-btn"        id="f-short" onclick="setFilter('short')">📉 SHORT</button>
-  <button class="filter-btn"        id="f-neutral" onclick="setFilter('neutral')">⚖️ Нейтрально</button>
+<div class="toolbar">
+  <button class="filter-pill active" id="f-all"     onclick="setFilter('all')">Все 30</button>
+  <button class="filter-pill"        id="f-long"    onclick="setFilter('long')">📈 LONG</button>
+  <button class="filter-pill"        id="f-short"   onclick="setFilter('short')">📉 SHORT</button>
+  <button class="filter-pill"        id="f-neutral" onclick="setFilter('neutral')">⚖️ Нейтрально</button>
+  <div class="sep"></div>
+  <span class="sort-label">Сортировка:</span>
+  <button class="filter-pill" id="s-rank"  onclick="setSort('rank')">По рангу</button>
+  <button class="filter-pill" id="s-score" onclick="setSort('score')">По силе сигнала</button>
+  <button class="filter-pill" id="s-ch24"  onclick="setSort('ch24')">По изменению 24ч</button>
 </div>
 
 <div class="grid" id="grid"></div>
+<div class="notif-bar" id="notif-bar"></div>
 
 <script>
 const TOP_COINS = [
@@ -391,275 +257,435 @@ const TOP_COINS = [
   'aptos','hedera-hashgraph','internet-computer','filecoin','arbitrum'
 ];
 
-let allCoins = [];
-let filter = 'all';
-let countdown = 60;
-let countdownInterval = null;
+let allCoins = [], filter = 'all', sortBy = 'rank';
+let cdTimer = null, cdSec = 60;
+let lastSignals = {};
 
-/* ──────────────── SIGNAL ENGINE ──────────────── */
-function calcRSI(price, high24, low24) {
-  // Simplified RSI approximation using position in 24h range
-  if (high24 === low24) return 50;
-  return ((price - low24) / (high24 - low24)) * 100;
-}
+/* ═══════════════ SIGNAL + LEVELS ENGINE ═══════════════ */
+function analyze(coin) {
+  const price  = coin.current_price || 0;
+  const high   = coin.high_24h  || price * 1.05;
+  const low    = coin.low_24h   || price * 0.95;
+  const ch24   = coin.price_change_percentage_24h || 0;
+  const ch7d   = coin.price_change_percentage_7d_in_currency || 0;
+  const vol    = coin.total_volume || 0;
+  const mcap   = coin.market_cap  || 1;
+  const range  = high - low || price * 0.1;
+  const rsi    = Math.max(0, Math.min(100, ((price - low) / range) * 100));
+  const volR   = vol / mcap;
 
-function getSignal(coin) {
-  const change24 = coin.price_change_percentage_24h || 0;
-  const change7d  = coin.price_change_percentage_7d_in_currency || 0;
-  const vol = coin.total_volume || 0;
-  const mktCap = coin.market_cap || 1;
-  const volRatio = vol / mktCap;   // volume/mcap ratio
-  const high = coin.high_24h || coin.current_price;
-  const low  = coin.low_24h  || coin.current_price;
-  const price = coin.current_price || 0;
+  // Score
+  let score = 0, reasons = [];
+  if (ch24 > 6)  { score += 3; reasons.push(`Рост 24ч +${ch24.toFixed(1)}%`); }
+  else if (ch24 > 2) { score += 2; reasons.push(`Умер. рост +${ch24.toFixed(1)}%`); }
+  else if (ch24 > 0) { score += 1; }
+  else if (ch24 < -6){ score -= 3; reasons.push(`Падение ${ch24.toFixed(1)}%`); }
+  else if (ch24 < -2){ score -= 2; reasons.push(`Умер. падение ${ch24.toFixed(1)}%`); }
+  else if (ch24 < 0) { score -= 1; }
 
-  const rsi = calcRSI(price, high, low);
+  if (ch7d > 12)  { score += 2; reasons.push('Бычий тренд 7д'); }
+  else if (ch7d > 4)  { score += 1; }
+  else if (ch7d < -12){ score -= 2; reasons.push('Медвежий тренд 7д'); }
+  else if (ch7d < -4) { score -= 1; }
 
-  // Scoring system: +positive = LONG, -negative = SHORT
-  let score = 0;
-  let reasons = [];
+  if (rsi < 25)  { score += 3; reasons.push(`RSI перепродан (${rsi.toFixed(0)})`); }
+  else if (rsi < 40) { score += 1; reasons.push(`RSI низкий (${rsi.toFixed(0)})`); }
+  else if (rsi > 75) { score -= 3; reasons.push(`RSI перекуплен (${rsi.toFixed(0)})`); }
+  else if (rsi > 60) { score -= 1; }
 
-  // 24h price change
-  if (change24 > 5)  { score += 3; reasons.push('Рост 24ч +' + change24.toFixed(1) + '%'); }
-  else if (change24 > 2) { score += 2; reasons.push('Умер. рост 24ч'); }
-  else if (change24 > 0) { score += 1; }
-  else if (change24 < -5) { score -= 3; reasons.push('Падение 24ч ' + change24.toFixed(1) + '%'); }
-  else if (change24 < -2) { score -= 2; reasons.push('Умер. падение 24ч'); }
-  else if (change24 < 0) { score -= 1; }
-
-  // 7d trend
-  if (change7d > 10) { score += 2; reasons.push('Бычий тренд 7д'); }
-  else if (change7d > 3)  { score += 1; }
-  else if (change7d < -10){ score -= 2; reasons.push('Медвежий тренд 7д'); }
-  else if (change7d < -3) { score -= 1; }
-
-  // RSI zones
-  if (rsi < 30) { score += 2; reasons.push('RSI перепродан (' + rsi.toFixed(0) + ')'); }
-  else if (rsi < 45) { score += 1; reasons.push('RSI низкий'); }
-  else if (rsi > 70) { score -= 2; reasons.push('RSI перекуплен (' + rsi.toFixed(0) + ')'); }
-  else if (rsi > 55) { score -= 1; }
-
-  // Volume spike
-  if (volRatio > 0.15) { 
-    if (change24 > 0) { score += 2; reasons.push('Высокий объём (бычий)'); }
-    else { score -= 1; reasons.push('Высокий объём (медвежий)'); }
+  if (volR > 0.12) {
+    if (ch24 > 0) { score += 2; reasons.push('Объёмный всплеск (бычий)'); }
+    else           { score -= 1; reasons.push('Объёмный всплеск (медвежий)'); }
   }
 
-  // Price vs 24h high (momentum)
-  const distFromHigh = ((high - price) / (high || 1)) * 100;
-  if (distFromHigh < 3 && change24 > 0) { score += 1; reasons.push('Вблизи максимума'); }
-  if (distFromHigh > 15 && change24 < 0){ score -= 1; }
+  const distHigh = ((high - price) / high) * 100;
+  if (distHigh < 2 && ch24 > 0) { score += 1; reasons.push('У максимума 24ч'); }
 
   let signal, strength;
-  if (score >= 4)      { signal = 'long';    strength = 'Сильный'; }
+  if      (score >= 5) { signal = 'long';    strength = 'Сильный'; }
   else if (score >= 2) { signal = 'long';    strength = 'Умеренный'; }
-  else if (score <= -4){ signal = 'short';   strength = 'Сильный'; }
+  else if (score <= -5){ signal = 'short';   strength = 'Сильный'; }
   else if (score <= -2){ signal = 'short';   strength = 'Умеренный'; }
   else                 { signal = 'neutral'; strength = 'Нейтральный'; }
 
-  return { signal, strength, score, rsi, reasons: reasons.slice(0, 3) };
+  /* ── ENTRY / EXIT LEVELS ── */
+  let entry, tp1, tp2, sl;
+  const atr = range * 0.5; // approximate ATR from daily range
+
+  if (signal === 'long') {
+    entry = price;
+    // Support confluence near low + 2%
+    const support = low * 1.02;
+    entry = price > support ? price : price * 1.005; // slight above current
+    sl    = low  * 0.985;                            // below 24h low
+    tp1   = price + atr * 1.5;                       // 1.5x ATR
+    tp2   = high * 1.03;                             // above 24h high
+  } else if (signal === 'short') {
+    entry = price;
+    const resist = high * 0.98;
+    entry = price < resist ? price : price * 0.995;
+    sl    = high  * 1.015;                           // above 24h high
+    tp1   = price - atr * 1.5;
+    tp2   = low   * 0.97;
+  } else {
+    entry = price;
+    sl    = low  * 0.97;
+    tp1   = high * 1.02;
+    tp2   = null;
+  }
+
+  // Risk/Reward
+  const risk   = Math.abs(price - sl);
+  const reward = Math.abs(tp1 - price);
+  const rr     = risk > 0 ? (reward / risk) : 0;
+
+  return { signal, strength, score, rsi, reasons: reasons.slice(0,3), entry, tp1, tp2, sl, rr };
 }
 
-/* ──────────────── FORMAT HELPERS ──────────────── */
-function fmtPrice(n) {
-  if (!n) return '$0';
-  if (n >= 1000) return '$' + n.toLocaleString('ru-RU', {maximumFractionDigits: 0});
-  if (n >= 1)    return '$' + n.toFixed(2);
-  if (n >= 0.01) return '$' + n.toFixed(4);
+/* ═══════════════ FORMATTERS ═══════════════ */
+function fp(n) {
+  if (!n && n !== 0) return '—';
+  if (n >= 10000) return '$' + n.toLocaleString('ru-RU', {maximumFractionDigits: 0});
+  if (n >= 1)     return '$' + n.toFixed(2);
+  if (n >= 0.001) return '$' + n.toFixed(4);
   return '$' + n.toFixed(6);
 }
-
-function fmtNum(n) {
+function fn(n) {
   if (!n) return '—';
   if (n >= 1e9) return (n/1e9).toFixed(2) + 'B';
   if (n >= 1e6) return (n/1e6).toFixed(1) + 'M';
-  return n.toLocaleString();
+  if (n >= 1e3) return (n/1e3).toFixed(0) + 'K';
+  return n.toFixed(0);
 }
-
-function rsiColor(rsi) {
-  if (rsi < 30) return 'var(--long)';
-  if (rsi > 70) return 'var(--short)';
+function fpct(from, to) {
+  if (!from || !to) return '';
+  const p = ((to - from) / from * 100);
+  return (p >= 0 ? '+' : '') + p.toFixed(2) + '%';
+}
+function rsiColor(r) {
+  if (r < 30) return 'var(--long)';
+  if (r > 70) return 'var(--short)';
   return 'var(--neutral)';
 }
 
-/* ──────────────── RENDER ──────────────── */
-function renderCard(coin, idx) {
-  const { signal, strength, score, rsi, reasons } = getSignal(coin);
+/* ═══════════════ RENDER CARD ═══════════════ */
+function renderCard(coin) {
+  const { signal, strength, score, rsi, reasons, entry, tp1, tp2, sl, rr } = analyze(coin);
   const ch24 = coin.price_change_percentage_24h || 0;
   const ch7d  = coin.price_change_percentage_7d_in_currency || 0;
+  const chCls = ch24 >= 0 ? 'ch-up' : 'ch-down';
+  const chStr = (ch24 >= 0 ? '+' : '') + ch24.toFixed(2) + '%';
   const rsiPct = Math.min(Math.max(rsi, 0), 100);
-  const signalIcon = signal === 'long' ? '↑' : signal === 'short' ? '↓' : '→';
-  const signalLabel = signal === 'long' ? 'LONG' : signal === 'short' ? 'SHORT' : 'НЕЙТРАЛЬНО';
-  const chClass = ch24 >= 0 ? 'up' : 'down';
-  const chSign = ch24 >= 0 ? '+' : '';
+  const rc = rsiColor(rsi);
+  const sArrow = signal === 'long' ? '↑' : signal === 'short' ? '↓' : '→';
+  const sLabel = signal === 'long' ? 'LONG' : signal === 'short' ? 'SHORT' : 'НЕЙТРАЛЬНО';
+  const rrCls  = rr >= 2 ? 'rr-good' : rr >= 1 ? '' : 'rr-bad';
+  const price  = coin.current_price;
+
+  const levelsLong = signal === 'long' ? `
+    <div class="level-row">
+      <div class="level-left"><div class="level-dot lc-entry"></div><div class="level-name">📍 Точка входа</div></div>
+      <div style="text-align:right">
+        <div class="level-price lp-entry">${fp(entry)}</div>
+        <div class="level-pct">${fpct(price, entry)}</div>
+      </div>
+    </div>
+    <div class="level-row">
+      <div class="level-left"><div class="level-dot lc-tp1"></div><div class="level-name">🎯 Тейк-профит 1</div></div>
+      <div style="text-align:right">
+        <div class="level-price lp-tp">${fp(tp1)}</div>
+        <div class="level-pct">${fpct(entry, tp1)}</div>
+      </div>
+    </div>
+    ${tp2 ? `<div class="level-row">
+      <div class="level-left"><div class="level-dot lc-tp2"></div><div class="level-name">🎯 Тейк-профит 2</div></div>
+      <div style="text-align:right">
+        <div class="level-price lp-tp">${fp(tp2)}</div>
+        <div class="level-pct">${fpct(entry, tp2)}</div>
+      </div>
+    </div>` : ''}
+    <div class="level-row">
+      <div class="level-left"><div class="level-dot lc-sl"></div><div class="level-name">🛑 Стоп-лосс</div></div>
+      <div style="text-align:right">
+        <div class="level-price lp-sl">${fp(sl)}</div>
+        <div class="level-pct">${fpct(entry, sl)}</div>
+      </div>
+    </div>` : '';
+
+  const levelsShort = signal === 'short' ? `
+    <div class="level-row">
+      <div class="level-left"><div class="level-dot lc-entry"></div><div class="level-name">📍 Точка входа</div></div>
+      <div style="text-align:right">
+        <div class="level-price lp-entry">${fp(entry)}</div>
+        <div class="level-pct">${fpct(price, entry)}</div>
+      </div>
+    </div>
+    <div class="level-row">
+      <div class="level-left"><div class="level-dot lc-tp1"></div><div class="level-name">🎯 Тейк-профит 1</div></div>
+      <div style="text-align:right">
+        <div class="level-price lp-tp">${fp(tp1)}</div>
+        <div class="level-pct">${fpct(entry, tp1)}</div>
+      </div>
+    </div>
+    ${tp2 ? `<div class="level-row">
+      <div class="level-left"><div class="level-dot lc-tp2"></div><div class="level-name">🎯 Тейк-профит 2</div></div>
+      <div style="text-align:right">
+        <div class="level-price lp-tp">${fp(tp2)}</div>
+        <div class="level-pct">${fpct(entry, tp2)}</div>
+      </div>
+    </div>` : ''}
+    <div class="level-row">
+      <div class="level-left"><div class="level-dot lc-sl"></div><div class="level-name">🛑 Стоп-лосс</div></div>
+      <div style="text-align:right">
+        <div class="level-price lp-sl">${fp(sl)}</div>
+        <div class="level-pct">${fpct(entry, sl)}</div>
+      </div>
+    </div>` : '';
+
+  const levelsNeutral = signal === 'neutral' ? `
+    <div class="level-row">
+      <div class="level-left"><div class="level-dot lc-sl"></div><div class="level-name">📉 Поддержка</div></div>
+      <div style="text-align:right"><div class="level-price lp-sl">${fp(sl)}</div></div>
+    </div>
+    <div class="level-row">
+      <div class="level-left"><div class="level-dot lc-tp1"></div><div class="level-name">📈 Сопротивление</div></div>
+      <div style="text-align:right"><div class="level-price lp-tp">${fp(tp1)}</div></div>
+    </div>` : '';
 
   return `
-  <div class="coin-card ${signal}" id="card-${coin.id}" onclick="void(0)">
-    <div class="card-header">
-      <div class="coin-info">
-        <div class="coin-icon">
-          <img src="${coin.image}" alt="${coin.name}" onerror="this.style.display='none';this.parentNode.textContent='🪙'"/>
+  <div class="coin-card">
+    <div class="card-top-bar ${signal}"></div>
+    <div class="card-body">
+      <div class="coin-header">
+        <div class="coin-left">
+          <div class="coin-img">
+            <img src="${coin.image}" alt="${coin.name}" onerror="this.style.display='none'"/>
+          </div>
+          <div>
+            <div class="coin-nm">${coin.name}</div>
+            <div class="coin-sym">${coin.symbol}</div>
+            <span class="coin-rank-badge">#${coin.market_cap_rank || '—'}</span>
+          </div>
         </div>
-        <div>
-          <div class="coin-name">${coin.name}</div>
-          <div class="coin-symbol">${coin.symbol}</div>
-          <div class="coin-rank">#${coin.market_cap_rank || idx+1}</div>
+        <div class="sig-badge ${signal}">
+          <span class="sig-arrow">${sArrow}</span>
+          <span>${sLabel}</span>
         </div>
       </div>
-      <div class="signal-badge ${signal}">
-        <span>${signalIcon}</span>
-        <span>${signalLabel}</span>
-      </div>
-    </div>
 
-    <div class="price-row">
-      <div class="price">${fmtPrice(coin.current_price)}</div>
-      <div class="change ${chClass}">${chSign}${ch24.toFixed(2)}%</div>
-    </div>
+      <div class="price-row">
+        <div class="big-price">${fp(price)}</div>
+        <div class="ch-pill ${chCls}">${chStr}</div>
+      </div>
 
-    <div class="metrics">
-      <div class="metric">
-        <div class="metric-label">7d Change</div>
-        <div class="metric-value ${ch7d >= 0 ? 'green' : 'red'}">${ch7d >= 0 ? '+' : ''}${ch7d.toFixed(1)}%</div>
+      <div class="levels-section">
+        <div class="levels-title">📊 Уровни торговли</div>
+        ${levelsLong}${levelsShort}${levelsNeutral}
+        ${signal !== 'neutral' ? `<div class="rr-badge">R/R: <span class="${rrCls}">${rr.toFixed(2)}x</span></div>` : ''}
       </div>
-      <div class="metric">
-        <div class="metric-label">Объём 24ч</div>
-        <div class="metric-value">$${fmtNum(coin.total_volume)}</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Мкт кап</div>
-        <div class="metric-value">$${fmtNum(coin.market_cap)}</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Макс 24ч</div>
-        <div class="metric-value">${fmtPrice(coin.high_24h)}</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Мин 24ч</div>
-        <div class="metric-value">${fmtPrice(coin.low_24h)}</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Сила сигн.</div>
-        <div class="metric-value ${signal === 'long' ? 'green' : signal === 'short' ? 'red' : 'yellow'}">${strength}</div>
-      </div>
-    </div>
 
-    <div class="rsi-section">
-      <div class="rsi-label-row">
-        <span class="rsi-label">RSI (14)</span>
-        <span class="rsi-val" style="color:${rsiColor(rsi)}">${rsi.toFixed(1)}</span>
+      <div class="rsi-wrap">
+        <div class="rsi-head">
+          <span>RSI (14 пр.)</span>
+          <span class="rsi-num" style="color:${rc}">${rsi.toFixed(1)}
+            ${rsi < 30 ? '— Перепродан' : rsi > 70 ? '— Перекуплен' : '— Нейтрально'}
+          </span>
+        </div>
+        <div class="rsi-track">
+          <div class="rsi-fill" style="width:${rsiPct}%;background:${rc};opacity:.65;height:6px;border-radius:3px;"></div>
+          <div class="rsi-thumb" style="left:${rsiPct}%;background:${rc};"></div>
+        </div>
       </div>
-      <div class="rsi-bar">
-        <div class="rsi-fill" style="width:${rsiPct}%; background:${rsiColor(rsi)}; opacity:.7;"></div>
-        <div class="rsi-marker" style="left:${rsiPct}%; background:${rsiColor(rsi)};"></div>
-      </div>
-    </div>
 
-    <div class="reasons">
-      ${reasons.map(r => `<span class="reason-tag">${r}</span>`).join('')}
-      ${score > 0 ? `<span class="reason-tag" style="color:var(--long);border-color:rgba(0,208,132,.3)">Очки: +${score}</span>` : ''}
-      ${score < 0 ? `<span class="reason-tag" style="color:var(--short);border-color:rgba(255,69,96,.3)">Очки: ${score}</span>` : ''}
+      <div class="metrics">
+        <div class="metric"><div class="m-lbl">7д Тренд</div><div class="m-val ${ch7d>=0?'mc-g':'mc-r'}">${ch7d>=0?'+':''}${ch7d.toFixed(1)}%</div></div>
+        <div class="metric"><div class="m-lbl">Объём 24ч</div><div class="m-val">$${fn(coin.total_volume)}</div></div>
+        <div class="metric"><div class="m-lbl">Мкт кап</div><div class="m-val">$${fn(coin.market_cap)}</div></div>
+        <div class="metric"><div class="m-lbl">Макс 24ч</div><div class="m-val mc-g">${fp(coin.high_24h)}</div></div>
+        <div class="metric"><div class="m-lbl">Мин 24ч</div><div class="m-val mc-r">${fp(coin.low_24h)}</div></div>
+        <div class="metric"><div class="m-lbl">Сигнал</div><div class="m-val ${signal==='long'?'mc-g':signal==='short'?'mc-r':'mc-y'}">${strength}</div></div>
+      </div>
+
+      <div class="tags">
+        ${reasons.map(r=>`<span class="tag">${r}</span>`).join('')}
+        ${score>0?`<span class="tag" style="color:var(--long);border-color:rgba(0,224,150,.3)">+${score} очков</span>`:''}
+        ${score<0?`<span class="tag" style="color:var(--short);border-color:rgba(255,61,90,.3)">${score} очков</span>`:''}
+      </div>
     </div>
   </div>`;
 }
 
-function renderSkeletons() {
-  const grid = document.getElementById('grid');
-  grid.innerHTML = Array(30).fill(0).map(() =>
-    `<div class="skeleton-card"><div class="skeleton" style="height:100%;border-radius:8px;"></div></div>`
-  ).join('');
+/* ═══════════════ STATS ═══════════════ */
+function updateStats(coins) {
+  let l=0, s=0, n=0, bestL=null, bestS=null;
+  coins.forEach(c => {
+    const a = analyze(c);
+    if (a.signal==='long')  { l++; if (!bestL || a.score > analyze(bestL).score) bestL = c; }
+    if (a.signal==='short') { s++; if (!bestS || a.score < analyze(bestS).score) bestS = c; }
+    if (a.signal==='neutral') n++;
+  });
+  document.getElementById('st-total').textContent = coins.length;
+  document.getElementById('st-long').textContent  = l;
+  document.getElementById('st-short').textContent = s;
+  document.getElementById('st-neutral').textContent = n;
+  document.getElementById('st-best-long').textContent  = bestL ? `${bestL.symbol.toUpperCase()} ${fp(analyze(bestL).tp1)}` : '—';
+  document.getElementById('st-best-short').textContent = bestS ? `${bestS.symbol.toUpperCase()} ${fp(analyze(bestS).tp1)}` : '—';
 }
 
-function renderCoins(coins) {
+/* ═══════════════ RENDER GRID ═══════════════ */
+function renderGrid(coins) {
+  let data = [...coins];
+  if (filter !== 'all') data = data.filter(c => analyze(c).signal === filter);
+  if (sortBy === 'score') data.sort((a,b) => {
+    const as = analyze(a).score, bs = analyze(b).score;
+    return filter === 'short' ? as - bs : bs - as;
+  });
+  if (sortBy === 'ch24') data.sort((a,b) =>
+    (b.price_change_percentage_24h||0) - (a.price_change_percentage_24h||0)
+  );
+
   const grid = document.getElementById('grid');
-  const filtered = filter === 'all' ? coins : coins.filter(c => getSignal(c).signal === filter);
-  if (filtered.length === 0) {
-    grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--muted);font-size:16px;">
-      Нет монет с выбранным фильтром
-    </div>`;
+  if (!data.length) {
+    grid.innerHTML = `<div class="error-box"><h3>Нет монет</h3><p>Попробуй другой фильтр</p></div>`;
     return;
   }
-  grid.innerHTML = filtered.map((c, i) => renderCard(c, i)).join('');
+  grid.innerHTML = data.map(renderCard).join('');
 }
 
-function updateStats(coins) {
-  let long = 0, short = 0, neutral = 0;
-  coins.forEach(c => {
-    const s = getSignal(c).signal;
-    if (s === 'long') long++;
-    else if (s === 'short') short++;
-    else neutral++;
+function renderSkeletons() {
+  document.getElementById('grid').innerHTML =
+    Array(30).fill('<div class="skeleton-card"><div class="skeleton-inner"></div></div>').join('');
+}
+
+/* ═══════════════ BROWSER NOTIFICATIONS ═══════════════ */
+function requestNotifPerms() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+}
+
+function sendBrowserNotif(title, body, icon) {
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification(title, { body, icon: icon || '' });
+  }
+}
+
+function showToast(msg, type) {
+  const bar = document.getElementById('notif-bar');
+  const el = document.createElement('div');
+  el.className = 'notif-toast';
+  el.innerHTML = `<div class="nt-head">🔔 Сигнал</div><div class="nt-body ${type}">${msg}</div>`;
+  bar.appendChild(el);
+  setTimeout(() => {
+    el.classList.add('out');
+    setTimeout(() => el.remove(), 350);
+  }, 8000);
+}
+
+function checkHourlyAlerts(coins) {
+  const now = Date.now();
+  const strong = coins.filter(c => {
+    const a = analyze(c);
+    return Math.abs(a.score) >= 5;
   });
-  const dom = long > short ? `📈 Бычий (${long} LONG)` : short > long ? `📉 Медвежий (${short} SHORT)` : '⚖️ Смешанный';
-  document.getElementById('stat-total').textContent = coins.length;
-  document.getElementById('stat-long').textContent = long;
-  document.getElementById('stat-short').textContent = short;
-  document.getElementById('stat-neutral').textContent = neutral;
-  document.getElementById('stat-dom').textContent = dom;
+
+  if (!strong.length) return;
+
+  const msgs = strong.slice(0, 5).map(c => {
+    const a = analyze(c);
+    const emoji = a.signal === 'long' ? '📈' : '📉';
+    return `${emoji} ${c.symbol.toUpperCase()}: ${a.signal.toUpperCase()} | Вход: ${fp(a.entry)} → TP1: ${fp(a.tp1)} | SL: ${fp(a.sl)}`;
+  });
+
+  // Browser notification
+  sendBrowserNotif(
+    `🚀 Крипто-сигналы: ${strong.length} сильных сигналов`,
+    msgs.slice(0,3).join('\n'),
+    'https://cryptologos.cc/logos/bitcoin-btc-logo.png'
+  );
+
+  // In-app toasts
+  msgs.forEach((m, i) => {
+    const c = strong[i];
+    const sig = analyze(c).signal;
+    setTimeout(() => showToast(m, sig), i * 600);
+  });
 }
 
-/* ──────────────── FETCH ──────────────── */
+/* ═══════════════ FETCH ═══════════════ */
 async function loadData() {
   const btn = document.getElementById('refresh-btn');
-  btn.disabled = true;
-  btn.textContent = '⟳ Загружаю...';
+  btn.disabled = true; btn.textContent = '⟳ Загружаю...';
   renderSkeletons();
-
   try {
     const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${TOP_COINS.join(',')}&order=market_cap_desc&per_page=30&page=1&price_change_percentage=7d`;
     const res = await fetch(url);
-    if (!res.ok) throw new Error('API error ' + res.status);
-    const data = await res.json();
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    allCoins = await res.json();
 
-    allCoins = data;
-    renderCoins(allCoins);
+    renderGrid(allCoins);
     updateStats(allCoins);
-
-    const now = new Date();
-    document.getElementById('last-update').textContent = 'Обновлено: ' + now.toLocaleTimeString('ru-RU');
-    resetCountdown();
+    checkHourlyAlerts(allCoins);
+    document.getElementById('upd-time').textContent = new Date().toLocaleTimeString('ru-RU');
+    startCountdown();
   } catch(e) {
     document.getElementById('grid').innerHTML = `
-      <div class="error-banner" style="grid-column:1/-1">
-        ⚠️ Ошибка загрузки данных: ${e.message}<br>
-        <small>CoinGecko API может иметь лимит запросов. Подожди 30 секунд и попробуй снова.</small>
+      <div class="error-box">
+        <h3>⚠️ Ошибка загрузки</h3>
+        <p>${e.message} — CoinGecko имеет лимит. Жди 30–60 секунд.</p>
       </div>`;
   }
-
-  btn.disabled = false;
-  btn.textContent = '⟳ Обновить';
+  btn.disabled = false; btn.textContent = '⟳ Обновить';
 }
 
-/* ──────────────── FILTER ──────────────── */
-function setFilter(f) {
-  filter = f;
-  ['all','long','short','neutral'].forEach(x => {
-    const btn = document.getElementById('f-' + x);
-    btn.className = 'filter-btn';
-  });
-  const active = document.getElementById('f-' + f);
-  if (f === 'long')  active.className = 'filter-btn long-active';
-  else if (f === 'short') active.className = 'filter-btn short-active';
-  else active.className = 'filter-btn active';
-
-  renderCoins(allCoins);
-}
-
-/* ──────────────── COUNTDOWN ──────────────── */
-function resetCountdown() {
-  clearInterval(countdownInterval);
-  countdown = 60;
-  countdownInterval = setInterval(() => {
-    countdown--;
-    document.getElementById('countdown-text').textContent = `Авто-обновление через ${countdown}с`;
-    if (countdown <= 0) {
-      loadData();
-    }
+/* ═══════════════ COUNTDOWN ═══════════════ */
+function startCountdown() {
+  clearInterval(cdTimer);
+  cdSec = 60;
+  cdTimer = setInterval(() => {
+    cdSec--;
+    document.getElementById('cd').textContent = `Обновление через ${cdSec}с`;
+    if (cdSec <= 0) loadData();
   }, 1000);
 }
 
-/* ──────────────── INIT ──────────────── */
+/* ═══════════════ FILTER / SORT ═══════════════ */
+function setFilter(f) {
+  filter = f;
+  ['all','long','short','neutral'].forEach(x => {
+    const b = document.getElementById('f-'+x);
+    b.className = 'filter-pill' + (f===x ? (x==='long'?' fl':x==='short'?' fs':' active') : '');
+  });
+  renderGrid(allCoins);
+}
+
+function setSort(s) {
+  sortBy = s;
+  ['rank','score','ch24'].forEach(x => {
+    document.getElementById('s-'+x).className = 'filter-pill' + (s===x?' active':'');
+  });
+  renderGrid(allCoins);
+}
+
+/* ═══════════════ HOURLY NOTIFICATION SCHEDULE ═══════════════ */
+function scheduleHourlyAlert() {
+  const now = new Date();
+  const msToNextHour = (60 - now.getMinutes()) * 60000 - now.getSeconds() * 1000;
+  setTimeout(() => {
+    checkHourlyAlerts(allCoins);
+    loadData();
+    setInterval(() => {
+      checkHourlyAlerts(allCoins);
+      loadData();
+    }, 3600000); // every hour
+  }, msToNextHour);
+}
+
+/* ═══════════════ INIT ═══════════════ */
+requestNotifPerms();
 loadData();
+scheduleHourlyAlert();
+setSort('rank');
 </script>
 </body>
 </html>
