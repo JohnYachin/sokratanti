@@ -31,7 +31,7 @@ TRACKED_COINS = [
 # Статусы, по которым шлём алерт
 ALERT_STATUSES = {"STRONG_SETUP", "BUY_ZONE", "EVENT_RISK"}
 # Cooldown между алертами одной монеты (секунды)
-ALERT_COOLDOWN = 4 * 3600  # 4 часа
+ALERT_COOLDOWN = 2 * 3600  # 2 часа
 
 
 def schedule_jobs(app: Application):
@@ -53,10 +53,18 @@ def schedule_jobs(app: Application):
     )
     app.job_queue.run_repeating(
         _check_signal_alerts,
-        interval=3600,   # каждый час
-        first=120,
+        interval=1800,   # каждые 30 минут
+        first=90,
         data={"user_id": user_id},
         name="signal_alerts",
+    )
+    # Обзор возможностей каждые 30 минут — все монеты с точками входа
+    app.job_queue.run_repeating(
+        _send_opportunities_report,
+        interval=1800,   # каждые 30 минут
+        first=30,
+        data={"user_id": user_id},
+        name="opportunities_report",
     )
     # Трекинг результатов каждый час
     app.job_queue.run_repeating(
@@ -79,6 +87,117 @@ def schedule_jobs(app: Application):
         "Запланирован авто-отчёт каждые %.1f ч., алерты каждый час, трекинг каждый час, оптимизация по воскресеньям.",
         interval_hours,
     )
+
+
+# ── 30-минутный обзор возможностей ───────────────────────────────────────────
+async def _send_opportunities_report(context):
+    """
+    Каждые 30 минут анализирует все 30 монет.
+    Отправляет список монет с реальными точками входа, SL и TP.
+    Если нет возможностей — отправляет краткую сводку рынка.
+    """
+    from data.coingecko import get_price
+    from analysis.signals import generate_signal
+
+    user_id = context.job.data["user_id"]
+
+    def fp(v):
+        if v is None: return "—"
+        if v >= 1000: return f"${v:,.0f}"
+        if v >= 1:    return f"${v:,.2f}"
+        return f"${v:.5f}"
+
+    def pct(entry, target):
+        if not entry or not target: return ""
+        p = (target - entry) / entry * 100
+        return f"({'+'  if p>=0 else ''}{p:.1f}%)"
+
+    opportunities = []
+    watch_list    = []
+
+    for coin in TRACKED_COINS:
+        try:
+            result = await asyncio.to_thread(generate_signal, coin)
+            status = result.get("status", "NO_EDGE")
+            score  = result.get("setup_score", 0)
+            plan   = result.get("trading_plan")
+            emoji  = result.get("emoji", "📊")
+            action = result.get("action", "")
+            trend  = result.get("trend", "unknown")
+
+            if status in ("STRONG_SETUP", "BUY_ZONE") and plan and plan.setup_valid:
+                t1 = getattr(plan, "target_1", None) or getattr(plan, "target1", None)
+                t2 = getattr(plan, "target_2", None) or getattr(plan, "target2", None)
+                opportunities.append({
+                    "coin":    coin.upper(),
+                    "emoji":   emoji,
+                    "status":  status,
+                    "score":   score,
+                    "action":  action,
+                    "entry_l": float(plan.entry_low),
+                    "entry_h": float(plan.entry_high),
+                    "sl":      float(plan.stop_loss),
+                    "tp1":     float(t1) if t1 else None,
+                    "tp2":     float(t2) if t2 else None,
+                    "rr":      float(plan.risk_reward) if plan.risk_reward else 0,
+                    "trend":   trend,
+                })
+            elif status == "WATCH" and score >= 42:
+                watch_list.append(f"👀 <b>{coin.upper()}</b> — {result.get('label_ru','WATCH')} ({score}/100)")
+
+        except Exception as e:
+            logger.error("Opportunities: ошибка %s: %s", coin, e)
+
+    now_str = __import__("datetime").datetime.now().strftime("%H:%M %d.%m")
+
+    if not opportunities and not watch_list:
+        text = (
+            f"⏰ <b>Обзор рынка {now_str}</b>\n\n"
+            "😴 Чётких точек входа нет.\n"
+            "Рынок в фазе накопления — ждём сигнала.\n\n"
+            "<i>Следующий анализ через 30 минут.</i>"
+        )
+        await context.bot.send_message(chat_id=user_id, text=text, parse_mode="HTML")
+        return
+
+    # Сортируем по score
+    opportunities.sort(key=lambda x: x["score"], reverse=True)
+
+    lines = [f"🔥 <b>ВОЗМОЖНОСТИ — {now_str}</b>\n"]
+    lines.append(f"Найдено точек входа: <b>{len(opportunities)}</b> из 30 монет\n")
+
+    for o in opportunities:
+        entry_mid = (o["entry_l"] + o["entry_h"]) / 2
+        bar_filled = round(o["score"] / 10)
+        bar = "█" * bar_filled + "░" * (10 - bar_filled)
+        trend_icon = {"bullish": "📈", "bearish": "📉", "neutral": "➡️"}.get(o["trend"], "❓")
+
+        block = (
+            f"\n{o['emoji']} <b>{o['coin']}</b> {trend_icon} | Score: <code>{o['score']}/100</code> [{bar}]\n"
+            f"  🎯 <b>{o['action']}</b>\n"
+            f"  📥 Вход:  <code>{fp(o['entry_l'])} — {fp(o['entry_h'])}</code>\n"
+            f"  🛑 SL:    <code>{fp(o['sl'])}</code> {pct(entry_mid, o['sl'])}\n"
+            f"  ✅ TP1:   <code>{fp(o['tp1'])}</code> {pct(entry_mid, o['tp1'])}\n"
+        )
+        if o["tp2"]:
+            block += f"  🚀 TP2:   <code>{fp(o['tp2'])}</code> {pct(entry_mid, o['tp2'])}\n"
+        block += f"  ⚖️ R/R:   <code>1:{o['rr']:.1f}</code>\n"
+        lines.append(block)
+
+    if watch_list:
+        lines.append("\n👀 <b>На наблюдении:</b>")
+        lines.extend(watch_list[:5])
+
+    lines.append("\n<i>Анализ: 1h + 4h + 1d | Binance + CoinGecko</i>")
+    lines.append("<i>Следующий обзор через 30 минут.</i>")
+
+    # Telegram лимит 4096 — режем если надо
+    text = "\n".join(lines)
+    if len(text) > 4000:
+        text = text[:3950] + "\n\n<i>...и ещё монеты. Используй /scan для полного списка.</i>"
+
+    await context.bot.send_message(chat_id=user_id, text=text, parse_mode="HTML")
+    logger.info("Opportunities report отправлен: %d монет", len(opportunities))
 
 
 # ── Авто-отчёт ──────────────────────────────────────────────────────────────
