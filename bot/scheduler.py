@@ -89,14 +89,13 @@ def schedule_jobs(app: Application):
     )
 
 
-# ── 30-минутный обзор возможностей ───────────────────────────────────────────
+# ── 30-минутный обзор возможностей (LONG + SHORT + AI) ───────────────────────
 async def _send_opportunities_report(context):
     """
     Каждые 30 минут анализирует все 30 монет.
-    Отправляет список монет с реальными точками входа, SL и TP.
-    Если нет возможностей — отправляет краткую сводку рынка.
+    Показывает LONG и SHORT возможности с entry/SL/TP1/TP2.
+    Использует Perplexity AI для рыночного контекста.
     """
-    from data.coingecko import get_price
     from analysis.signals import generate_signal
 
     user_id = context.job.data["user_id"]
@@ -110,94 +109,157 @@ async def _send_opportunities_report(context):
     def pct(entry, target):
         if not entry or not target: return ""
         p = (target - entry) / entry * 100
-        return f"({'+'  if p>=0 else ''}{p:.1f}%)"
+        sign = "+" if p >= 0 else ""
+        return f"({sign}{p:.1f}%)"
 
-    opportunities = []
-    watch_list    = []
+    longs  = []   # LONG возможности
+    shorts = []   # SHORT возможности
+    watch  = []   # На наблюдении
 
     for coin in TRACKED_COINS:
         try:
             result = await asyncio.to_thread(generate_signal, coin)
-            status = result.get("status", "NO_EDGE")
-            score  = result.get("setup_score", 0)
-            plan   = result.get("trading_plan")
-            emoji  = result.get("emoji", "📊")
-            action = result.get("action", "")
-            trend  = result.get("trend", "unknown")
+            status    = result.get("status", "NO_EDGE")
+            direction = result.get("direction", "NEUTRAL")
+            score     = result.get("setup_score", 0)
+            short_score = result.get("short_score", 0)
+            plan      = result.get("trading_plan")
+            short_plan = result.get("short_plan")
+            emoji     = result.get("emoji", "📊")
+            action    = result.get("action", "")
+            trend     = result.get("trend", "unknown")
+            ind       = result.get("indicators", {})
+            rsi       = ind.get("rsi")
 
-            if status in ("STRONG_SETUP", "BUY_ZONE") and plan and plan.setup_valid:
-                t1 = getattr(plan, "target_1", None) or getattr(plan, "target1", None)
-                t2 = getattr(plan, "target_2", None) or getattr(plan, "target2", None)
-                opportunities.append({
-                    "coin":    coin.upper(),
-                    "emoji":   emoji,
-                    "status":  status,
-                    "score":   score,
-                    "action":  action,
-                    "entry_l": float(plan.entry_low),
-                    "entry_h": float(plan.entry_high),
-                    "sl":      float(plan.stop_loss),
-                    "tp1":     float(t1) if t1 else None,
-                    "tp2":     float(t2) if t2 else None,
-                    "rr":      float(plan.risk_reward) if plan.risk_reward else 0,
-                    "trend":   trend,
+            trend_icon = {"bullish": "📈", "bearish": "📉", "neutral": "➡️"}.get(trend, "❓")
+            rsi_str = f"RSI {rsi:.0f}" if rsi else ""
+
+            # ── LONG сигнал ──────────────────────────────────────────────
+            if direction == "LONG" and plan and plan.setup_valid:
+                longs.append({
+                    "coin": coin.upper(), "emoji": emoji, "score": score,
+                    "action": action, "trend_icon": trend_icon, "rsi_str": rsi_str,
+                    "entry_l": plan.entry_low, "entry_h": plan.entry_high,
+                    "sl": plan.stop_loss, "tp1": plan.target_1, "tp2": plan.target_2,
+                    "rr": plan.risk_reward or 0,
                 })
-            elif status == "WATCH" and score >= 42:
-                watch_list.append(f"👀 <b>{coin.upper()}</b> — {result.get('label_ru','WATCH')} ({score}/100)")
+
+            # ── SHORT сигнал ─────────────────────────────────────────────
+            elif direction == "SHORT" and short_plan and short_plan.setup_valid:
+                shorts.append({
+                    "coin": coin.upper(), "emoji": emoji, "score": short_score,
+                    "action": action, "trend_icon": trend_icon, "rsi_str": rsi_str,
+                    "entry_l": short_plan.entry_low, "entry_h": short_plan.entry_high,
+                    "sl": short_plan.stop_loss, "tp1": short_plan.target_1,
+                    "tp2": short_plan.target_2, "rr": short_plan.risk_reward or 0,
+                })
+
+            # ── Наблюдение ───────────────────────────────────────────────
+            elif status == "WATCH" and score >= 40:
+                watch.append(
+                    f"👀 <b>{coin.upper()}</b> {trend_icon} "
+                    f"— {result.get('label_ru','WATCH')} ({score}/100) {rsi_str}"
+                )
 
         except Exception as e:
-            logger.error("Opportunities: ошибка %s: %s", coin, e)
+            logger.error("OpReport %s: %s", coin, e)
 
     now_str = __import__("datetime").datetime.now().strftime("%H:%M %d.%m")
+    longs.sort(key=lambda x: x["score"], reverse=True)
+    shorts.sort(key=lambda x: x["score"], reverse=True)
 
-    if not opportunities and not watch_list:
+    # ── Нет сигналов ────────────────────────────────────────────────────
+    if not longs and not shorts:
         text = (
             f"⏰ <b>Обзор рынка {now_str}</b>\n\n"
-            "😴 Чётких точек входа нет.\n"
-            "Рынок в фазе накопления — ждём сигнала.\n\n"
-            "<i>Следующий анализ через 30 минут.</i>"
+            "😴 Чётких сигналов (LONG/SHORT) нет.\n"
+            f"Монеты на наблюдении: {len(watch)}\n\n"
         )
+        if watch:
+            text += "\n".join(watch[:5]) + "\n\n"
+        text += "<i>Следующий анализ через 30 минут.</i>"
         await context.bot.send_message(chat_id=user_id, text=text, parse_mode="HTML")
         return
 
-    # Сортируем по score
-    opportunities.sort(key=lambda x: x["score"], reverse=True)
+    # ── Строим сообщение ─────────────────────────────────────────────────
+    lines = [
+        f"📊 <b>АНАЛИЗ РЫНКА — {now_str}</b>\n"
+        f"🟢 LONG: <b>{len(longs)}</b>  🔴 SHORT: <b>{len(shorts)}</b>  из 30 монет\n"
+    ]
 
-    lines = [f"🔥 <b>ВОЗМОЖНОСТИ — {now_str}</b>\n"]
-    lines.append(f"Найдено точек входа: <b>{len(opportunities)}</b> из 30 монет\n")
+    # ── AI комментарий от Perplexity ─────────────────────────────────────
+    if longs or shorts:
+        try:
+            from data.perplexity import get_market_analysis
+            top_coins = [o["coin"] for o in (longs + shorts)[:3]]
+            coins_str = ", ".join(top_coins)
+            ai_resp = await asyncio.to_thread(
+                get_market_analysis, coins_str
+            )
+            if ai_resp.get("analysis"):
+                ai_text = ai_resp["analysis"].strip()[:350]
+                lines.append(f"\n🤖 <b>AI (Perplexity):</b>\n<i>{ai_text}</i>\n")
+        except Exception as e:
+            logger.debug("Perplexity AI skip: %s", e)
 
-    for o in opportunities:
-        entry_mid = (o["entry_l"] + o["entry_h"]) / 2
-        bar_filled = round(o["score"] / 10)
-        bar = "█" * bar_filled + "░" * (10 - bar_filled)
-        trend_icon = {"bullish": "📈", "bearish": "📉", "neutral": "➡️"}.get(o["trend"], "❓")
+    # ── LONG блок ────────────────────────────────────────────────────────
+    if longs:
+        lines.append("━━━━━━━━━━━━━━━━━━━━")
+        lines.append("🟢 <b>LONG — ПОКУПАТЬ</b>")
+        for o in longs:
+            em = (o['entry_l'] + o['entry_h']) / 2
+            bar = "█" * round(o['score']/10) + "░" * (10 - round(o['score']/10))
+            block = (
+                f"\n{o['emoji']} <b>{o['coin']}</b> {o['trend_icon']} "
+                f"[<code>{bar}</code>] {o['score']}/100"
+                f"\n  🎯 {o['action']}"
+                f" | {o['rsi_str']}"
+                f"\n  📥 Вход:  <code>{fp(o['entry_l'])} — {fp(o['entry_h'])}</code>"
+                f"\n  🛑 SL:    <code>{fp(o['sl'])}</code> {pct(em, o['sl'])}"
+                f"\n  ✅ TP1:   <code>{fp(o['tp1'])}</code> {pct(em, o['tp1'])}"
+            )
+            if o['tp2']:
+                block += f"\n  🚀 TP2:   <code>{fp(o['tp2'])}</code> {pct(em, o['tp2'])}"
+            block += f"\n  ⚖️ R/R    <code>1:{o['rr']:.1f}</code>"
+            lines.append(block)
 
-        block = (
-            f"\n{o['emoji']} <b>{o['coin']}</b> {trend_icon} | Score: <code>{o['score']}/100</code> [{bar}]\n"
-            f"  🎯 <b>{o['action']}</b>\n"
-            f"  📥 Вход:  <code>{fp(o['entry_l'])} — {fp(o['entry_h'])}</code>\n"
-            f"  🛑 SL:    <code>{fp(o['sl'])}</code> {pct(entry_mid, o['sl'])}\n"
-            f"  ✅ TP1:   <code>{fp(o['tp1'])}</code> {pct(entry_mid, o['tp1'])}\n"
-        )
-        if o["tp2"]:
-            block += f"  🚀 TP2:   <code>{fp(o['tp2'])}</code> {pct(entry_mid, o['tp2'])}\n"
-        block += f"  ⚖️ R/R:   <code>1:{o['rr']:.1f}</code>\n"
-        lines.append(block)
+    # ── SHORT блок ───────────────────────────────────────────────────────
+    if shorts:
+        lines.append("\n━━━━━━━━━━━━━━━━━━━━")
+        lines.append("🔴 <b>SHORT — ПРОДАВАТЬ</b>")
+        for o in shorts:
+            em = (o['entry_l'] + o['entry_h']) / 2
+            bar = "█" * round(o['score']/10) + "░" * (10 - round(o['score']/10))
+            block = (
+                f"\n{o['emoji']} <b>{o['coin']}</b> {o['trend_icon']} "
+                f"[<code>{bar}</code>] {o['score']}/100"
+                f"\n  🎯 {o['action']}"
+                f" | {o['rsi_str']}"
+                f"\n  📤 Шорт:  <code>{fp(o['entry_l'])} — {fp(o['entry_h'])}</code>"
+                f"\n  🛑 SL:    <code>{fp(o['sl'])}</code> {pct(em, o['sl'])}"
+                f"\n  ✅ TP1:   <code>{fp(o['tp1'])}</code> {pct(em, o['tp1'])}"
+            )
+            if o['tp2']:
+                block += f"\n  🚀 TP2:   <code>{fp(o['tp2'])}</code> {pct(em, o['tp2'])}"
+            block += f"\n  ⚖️ R/R    <code>1:{o['rr']:.1f}</code>"
+            lines.append(block)
 
-    if watch_list:
-        lines.append("\n👀 <b>На наблюдении:</b>")
-        lines.extend(watch_list[:5])
+    # ── Наблюдение ───────────────────────────────────────────────────────
+    if watch:
+        lines.append("\n━━━━━━━━━━━━━━━━━━━━")
+        lines.append("👀 <b>На наблюдении:</b>")
+        lines.extend(watch[:4])
 
-    lines.append("\n<i>Анализ: 1h + 4h + 1d | Binance + CoinGecko</i>")
+    lines.append("\n<i>Данные: Binance 1h+4h+1d + CoinGecko + Perplexity AI</i>")
     lines.append("<i>Следующий обзор через 30 минут.</i>")
 
-    # Telegram лимит 4096 — режем если надо
     text = "\n".join(lines)
-    if len(text) > 4000:
-        text = text[:3950] + "\n\n<i>...и ещё монеты. Используй /scan для полного списка.</i>"
+    if len(text) > 4050:
+        text = text[:4000] + "\n\n<i>...ещё монеты. Используй /scan</i>"
 
     await context.bot.send_message(chat_id=user_id, text=text, parse_mode="HTML")
-    logger.info("Opportunities report отправлен: %d монет", len(opportunities))
+    logger.info("OpReport: %d LONG, %d SHORT отправлено", len(longs), len(shorts))
+
 
 
 # ── Авто-отчёт ──────────────────────────────────────────────────────────────

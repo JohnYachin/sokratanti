@@ -121,6 +121,122 @@ def calculate_trading_plan(
     )
 
 
+def calculate_short_plan(
+    price: float,
+    indicators: dict,
+    supports: list,
+    resistances: list,
+    swing_high: Optional[float] = None,
+) -> TradingPlan:
+    """
+    Рассчитывает торговый план для SHORT позиции.
+    Вход — вблизи сопротивления / верхней BB / EMA.
+    Stop-loss — выше swing high.
+    Цели — ближайшая поддержка / R/R 1:2, 1:3.5.
+    """
+    atr    = indicators.get("atr")
+    bb_high = indicators.get("bb_high")
+    ema20  = indicators.get("ema20")
+    ema50  = indicators.get("ema50")
+
+    # ── Stop-loss для SHORT: ВЫШЕ ключевого уровня ───────────────────────────
+    atr_buf = atr * 0.5 if atr else price * 0.02
+
+    sl_candidates = []
+    if swing_high and swing_high > price:
+        sl = swing_high + atr_buf
+        if sl < price * 1.10:   # не больше 10% риска
+            sl_candidates.append(sl)
+    if resistances:
+        r0 = resistances[0].price
+        if r0 > price:
+            sl = r0 + atr_buf
+            if sl < price * 1.10:
+                sl_candidates.append(sl)
+    if atr:
+        sl_candidates.append(price + atr * 2.0)
+
+    if not sl_candidates:
+        return TradingPlan(
+            entry_low=None, entry_high=None,
+            stop_loss=None, target_1=None, target_2=None,
+            chase_limit=None, risk_reward=None, risk_pct=None,
+            setup_valid=False,
+            invalidation="Нельзя определить стоп-лосс для SHORT",
+        )
+
+    stop_loss = min(sl_candidates)  # консервативный (ближайший)
+
+    # ── Зона входа SHORT: у сопротивления ─────────────────────────────────
+    entry_candidates_low  = []
+    entry_candidates_high = []
+
+    if bb_high and bb_high > price:
+        entry_candidates_high.append(bb_high)
+        entry_candidates_low.append(bb_high * 0.99)
+    if ema20 and ema20 > price:
+        entry_candidates_high.append(ema20 * 1.005)
+        entry_candidates_low.append(ema20 * 0.995)
+    if resistances:
+        r0 = resistances[0].price
+        if r0 > price:
+            entry_candidates_high.append(r0 * 1.005)
+            entry_candidates_low.append(r0 * 0.995)
+
+    if not entry_candidates_low:
+        entry_low  = price * 0.995
+        entry_high = price * 1.005
+    else:
+        import statistics
+        entry_low  = statistics.median(entry_candidates_low)
+        entry_high = statistics.median(entry_candidates_high)
+
+    entry_mid = (entry_low + entry_high) / 2
+
+    # Стоп должен быть выше зоны входа
+    if stop_loss <= entry_high:
+        stop_loss = entry_high * 1.02
+
+    risk_per_unit = stop_loss - entry_mid
+    risk_pct = round((risk_per_unit / entry_mid) * 100, 2) if entry_mid > 0 else None
+
+    # ── Цели SHORT (вниз) ──────────────────────────────────────────────────
+    t1_raw = entry_mid - risk_per_unit * 2.0
+    t2_raw = entry_mid - risk_per_unit * 3.5
+
+    # Корректируем по поддержке (не заходим ниже ключевого уровня)
+    if supports:
+        nearest_sup = supports[0].price
+        if nearest_sup > t1_raw:
+            t1_raw = nearest_sup * 1.005  # чуть выше поддержки
+        if len(supports) >= 2:
+            second_sup = supports[1].price
+            if second_sup > t2_raw:
+                t2_raw = second_sup * 1.005
+
+    target_1 = round(t1_raw, _decimals(price))
+    target_2 = round(t2_raw, _decimals(price))
+
+    reward = entry_mid - target_1
+    risk_reward = round(reward / risk_per_unit, 2) if risk_per_unit > 0 else None
+
+    # Chase limit для SHORT: не шортить ниже этой цены (слишком поздно)
+    chase_limit = round(entry_low * 0.985, _decimals(price))
+
+    return TradingPlan(
+        entry_low=round(entry_low, _decimals(price)),
+        entry_high=round(entry_high, _decimals(price)),
+        stop_loss=round(stop_loss, _decimals(price)),
+        target_1=target_1,
+        target_2=target_2,
+        chase_limit=chase_limit,
+        risk_reward=risk_reward,
+        risk_pct=risk_pct,
+        setup_valid=True,
+        invalidation="",
+    )
+
+
 def _calc_stop_loss(
     price: float,
     swing_low: Optional[float],

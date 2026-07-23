@@ -77,7 +77,86 @@ def _get_news_score(coin: str) -> tuple[float, str, bool]:
     return 0.0, "Новости: нет данных", False
 
 
+def _calc_short_score(ind_1d: dict, ind_4h: dict | None,
+                      fg_score: int, news_raw: float, trend: str) -> int:
+    """
+    Рассчитывает медвежий SHORT score 0-100.
+    Зеркало _calc_setup_score — ищет условия для SHORT позиции.
+    """
+    score = 0
+
+    # Медвежий тренд (20 pts)
+    if trend == "bearish":
+        score += 20
+    elif trend == "neutral":
+        score += 8
+
+    # RSI перекупленность (15 pts)
+    rsi = ind_1d.get("rsi")
+    if rsi is not None:
+        if 70 <= rsi <= 80:
+            score += 15  # перекуплен — шорт
+        elif 80 < rsi:
+            score += 12  # экстремально перекуплен
+        elif 60 <= rsi < 70:
+            score += 6
+
+    # BB верхняя полоса (10 pts)
+    pband = ind_1d.get("bb_pband")
+    if pband is not None:
+        if pband >= 0.85:
+            score += 10
+        elif pband >= 0.70:
+            score += 5
+
+    # MACD отрицательный (10 pts)
+    macd_diff = ind_1d.get("macd_diff")
+    if macd_diff is not None and macd_diff < 0:
+        score += 10
+
+    # ADX — сильный тренд (5 pts)
+    adx = ind_1d.get("adx")
+    if adx is not None and adx >= 20:
+        score += 5
+
+    # Цена ниже EMA — подтверждение медвежьего (8 pts)
+    price  = ind_1d.get("price")
+    ema20  = ind_1d.get("ema20")
+    ema50  = ind_1d.get("ema50")
+    ema200 = ind_1d.get("ema200")
+    if price and ema20 and ema50 and price < ema20 and ema20 < ema50:
+        score += 5
+    if price and ema200 and price < ema200:
+        score += 3
+
+    # 4h подтверждение (15 pts)
+    if ind_4h:
+        rsi_4h   = ind_4h.get("rsi")
+        macd_4h  = ind_4h.get("macd_diff")
+        if rsi_4h is not None and rsi_4h >= 60:
+            score += 8
+        if macd_4h is not None and macd_4h < 0:
+            score += 7
+
+    # Fear & Greed: жадность → шорт (10 pts)
+    if fg_score <= -1:   # extreme greed
+        score += 10
+    elif fg_score == 0:
+        score += 4
+
+    # Негативные новости (12 pts)
+    if news_raw < -0.3:
+        score += 12
+    elif news_raw < -0.1:
+        score += 6
+    elif news_raw > 0.3:
+        score -= 8
+
+    return max(0, min(100, score))
+
+
 def _calc_setup_score(ind_1d: dict, ind_4h: dict | None, fg_score: int,
+
                       news_raw: float, trend: str,
                       learned_weights: dict | None = None) -> int:
     """
@@ -163,17 +242,31 @@ def _calc_setup_score(ind_1d: dict, ind_4h: dict | None, fg_score: int,
 
 
 
-def _signal_status(setup_score: int, has_critical: bool) -> tuple[str, str, str]:
-    """Возвращает (status, emoji, label_ru)."""
+def _signal_status(setup_score: int, has_critical: bool,
+                   short_score: int = 0) -> tuple[str, str, str, str]:
+    """
+    Возвращает (status, emoji, label_ru, direction).
+    direction: 'LONG' | 'SHORT' | 'NEUTRAL'
+    Анализирует как бычьи, так и медвежьи сетапы.
+    """
     if has_critical:
-        return "EVENT_RISK", "🚨", "СОБЫТИЕ-РИСК"
+        return "EVENT_RISK", "🚨", "СОБЫТИЕ-РИСК", "NEUTRAL"
+
+    # SHORT побеждает если медвежий скор сильнее бычьего
+    if short_score >= 75 and short_score > setup_score:
+        return "STRONG_SHORT", "🔴", "СИЛЬНЫЙ ШОРТ", "SHORT"
+    if short_score >= 55 and short_score > setup_score:
+        return "SHORT_ZONE",   "🟠", "ЗОНА ШОРТА",   "SHORT"
+
+    # LONG
     if setup_score >= 75:
-        return "STRONG_SETUP", "🔥", "СИЛЬНЫЙ СЕТАП"
+        return "STRONG_SETUP", "🔥", "СИЛЬНЫЙ СЕТАП", "LONG"
     if setup_score >= 55:
-        return "BUY_ZONE", "🟢", "ЗОНА ПОКУПКИ"
+        return "BUY_ZONE",     "🟢", "ЗОНА ПОКУПКИ",  "LONG"
     if setup_score >= 40:
-        return "WATCH", "👀", "НАБЛЮДЕНИЕ"
-    return "NO_EDGE", "🟡", "НЕТ ПРЕИМУЩЕСТВА"
+        return "WATCH",        "👀", "НАБЛЮДЕНИЕ",    "NEUTRAL"
+    return "NO_EDGE", "🟡", "НЕТ ПРЕИМУЩЕСТВА", "NEUTRAL"
+
 
 
 def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
@@ -329,14 +422,20 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
         learned_weights=learned_weights,
     )
 
+    # Явный медвежий SHORT score
+    short_score = _calc_short_score(
+        ind_1d, ind_4h or None, fg_score, news_raw, trend,
+    )
+
     # Применяем поправку фьючерсного рынка
     setup_score = max(0, min(100, setup_score + futures_score_adj))
+    short_score = max(0, min(100, short_score - futures_score_adj))  # фандинг уменьшает short
 
     if has_critical:
         setup_score = max(setup_score - 30, 0)
+        short_score = max(short_score - 30, 0)
 
-
-    status, emoji, label_ru = _signal_status(setup_score, has_critical)
+    status, emoji, label_ru, direction = _signal_status(setup_score, has_critical, short_score)
 
     # ── Определяем ACTION (главный вывод) ────────────────────────────────────
     # Это то что пользователь видит в первую очередь
@@ -344,20 +443,30 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
         action      = "НЕ ВХОДИТЬ"
         action_icon = "🚨"
         action_desc = "Критическое событие — высокий риск"
+    # ── SHORT actions ─────────────────────────────────────────────────────────────────
+    elif status == "STRONG_SHORT":
+        action      = "ШОРТИТЬ СЕЙЧАС"
+        action_icon = "🔴"
+        action_desc = "Сильный медвежий сетап — открывай SHORT"
+    elif status == "SHORT_ZONE":
+        action      = "ГОТОВИТЬСЯ К ШОРТУ"
+        action_icon = "🟠"
+        action_desc = "Медвежь подтверждён — жди 1h сигнала"
+    # ── LONG actions ─────────────────────────────────────────────────────────────────
     elif status == "STRONG_SETUP" and entry_timing == "now":
         action      = "ПОКУПАТЬ СЕЙЧАС"
         action_icon = "🟢"
         action_desc = "Сильный сетап + 1h готов"
     elif status == "STRONG_SETUP" and entry_timing in ("wait", "neutral"):
-        action      = "ГОТОВИТЬСЯ К ВХОДУ"
+        action      = "ГОТОВИТЬСЯ К ЛОНГУ"
         action_icon = "🟡"
         action_desc = "Сетап сильный, жди 1h сигнала"
     elif status == "STRONG_SETUP" and entry_timing == "overbought":
         action      = "ЖДАТЬ ОТКАТА"
         action_icon = "🟡"
-        action_desc = "Сильный сетап, но 1h перекуплен — жди"
+        action_desc = "Сильный сетап, но 1h перекуплен"
     elif status == "BUY_ZONE" and entry_timing == "now":
-        action      = "МОЖНО ВХОДИТЬ"
+        action      = "МОЖНО ЛОНГОВАТЬ"
         action_icon = "🟢"
         action_desc = "Зона покупки + 1h подтверждает"
     elif status == "BUY_ZONE":
@@ -377,8 +486,9 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
     old_score = rsi_score + macd_score + bb_score + fg_score
     signal = "BUY" if old_score >= 2 else ("SELL" if old_score <= -2 else "HOLD")
 
-    # ── Торговый план ────────────────────────────────────────────────────────
+    # ── Торговый план LONG или SHORT ─────────────────────────────────────
     trading_plan = None
+    short_plan   = None
     if status in ("BUY_ZONE", "STRONG_SETUP", "WATCH"):
         try:
             from analysis.levels import find_swing_points, find_key_levels
@@ -396,7 +506,26 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
                 swing_low=swing.recent_low,
             )
         except Exception as e:
-            logger.error("Trading plan error для %s: %s", coin, e)
+            logger.error("Trading plan (LONG) error для %s: %s", coin, e)
+
+    if status in ("SHORT_ZONE", "STRONG_SHORT"):
+        try:
+            from analysis.levels import find_swing_points, find_key_levels
+            from analysis.risk import calculate_short_plan
+
+            price = ind_1d.get("price", float(df_1d["close"].iloc[-1]))
+            swing = find_swing_points(df_1d)
+            supports, resistances = find_key_levels(df_1d)
+
+            short_plan = calculate_short_plan(
+                price=price,
+                indicators=ind_1d,
+                supports=supports,
+                resistances=resistances,
+                swing_high=swing.recent_high,
+            )
+        except Exception as e:
+            logger.error("Short plan error для %s: %s", coin, e)
 
     # ── AI Sentiment (опционально) ───────────────────────────────────────────
     sentiment_score = 0.0
@@ -423,6 +552,8 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
         "emoji":         emoji,
         "score":         old_score,
         "setup_score":   setup_score,
+        "short_score":   short_score,
+        "direction":     direction,
         "status":        status,
         "label_ru":      label_ru,
         "action":        action,
@@ -433,6 +564,7 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
         "reasons":       reasons,
         "indicators":    indicators_combined,
         "trading_plan":  trading_plan,
+        "short_plan":    short_plan,
         "has_4h":        bool(ind_4h),
         "has_1h":        bool(ind_1h),
         "sentiment_score": sentiment_score,
