@@ -27,10 +27,29 @@ from db.database import save_signal, get_history
 logger = logging.getLogger(__name__)
 
 # ── Монеты по умолчанию ──────────────────────────────────────────────────────
-TRACKED_COINS = ["btc", "eth", "sol", "bnb", "doge"]
+TRACKED_COINS = [
+    # Топ-10
+    "btc", "eth", "bnb", "sol", "xrp",
+    "doge", "ada", "avax", "link", "dot",
+    # Топ 11-20
+    "near", "ltc", "uni", "shib", "trx",
+    "bch", "atom", "xlm", "etc", "fil",
+    # Топ 21-30
+    "arb", "sui", "pepe", "apt", "hbar",
+    "icp", "vet", "mkr", "aave", "op",
+]
 COIN_NAMES = {
-    "btc": "Bitcoin", "eth": "Ethereum", "sol": "Solana",
-    "bnb": "BNB", "doge": "Dogecoin",
+    "btc":  "Bitcoin",     "eth":  "Ethereum",   "bnb":  "BNB",
+    "sol":  "Solana",      "xrp":  "Ripple",      "doge": "Dogecoin",
+    "ada":  "Cardano",     "avax": "Avalanche",   "link": "Chainlink",
+    "dot":  "Polkadot",    "near": "NEAR",        "ltc":  "Litecoin",
+    "uni":  "Uniswap",     "shib": "Shiba Inu",   "trx":  "TRON",
+    "bch":  "Bitcoin Cash","atom": "Cosmos",      "xlm":  "Stellar",
+    "etc":  "Ethereum Classic", "fil": "Filecoin",
+    "arb":  "Arbitrum",    "sui":  "Sui",          "pepe": "Pepe",
+    "apt":  "Aptos",       "hbar": "Hedera",      "icp":  "Internet Computer",
+    "vet":  "VeChain",     "mkr":  "Maker",        "aave": "Aave",
+    "op":   "Optimism",
 }
 
 
