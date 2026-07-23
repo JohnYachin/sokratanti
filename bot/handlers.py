@@ -39,13 +39,6 @@ TRACKED_COINS = [
     "icp", "vet", "mkr", "aave", "op",
 ]
 COIN_NAMES = {
-    "btc":  "Bitcoin",     "eth":  "Ethereum",   "bnb":  "BNB",
-    "sol":  "Solana",      "xrp":  "Ripple",      "doge": "Dogecoin",
-    "ada":  "Cardano",     "avax": "Avalanche",   "link": "Chainlink",
-    "dot":  "Polkadot",    "near": "NEAR",        "ltc":  "Litecoin",
-    "uni":  "Uniswap",     "shib": "Shiba Inu",   "trx":  "TRON",
-    "bch":  "Bitcoin Cash","atom": "Cosmos",      "xlm":  "Stellar",
-    "etc":  "Ethereum Classic", "fil": "Filecoin",
     "arb":  "Arbitrum",    "sui":  "Sui",          "pepe": "Pepe",
     "apt":  "Aptos",       "hbar": "Hedera",      "icp":  "Internet Computer",
     "vet":  "VeChain",     "mkr":  "Maker",        "aave": "Aave",
@@ -80,20 +73,20 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 <b>Sokratanti</b> — твой крипто-ассистент v2.0\n\n"
         "📋 <b>Команды:</b>\n"
         "/price <code>BTC</code> — текущая цена\n"
-        "/signal <code>BTC</code> — торговый сигнал + зона входа + SL + цели\n"
-        "/scan — анализ всех монет (setup score + торговые планы)\n"
+        "/signal <code>BTC</code> — торговый сигнал + точка входа + SL + TP1 + TP2\n"
+        "/scan — анализ всех 30 монет (LONG/SHORT + торговые планы)\n"
         "/sentiment <code>BTC</code> — настроение рынка (AI)\n"
         "/analyze <code>BTC</code> — анализ от Perplexity\n"
-        "/news <code>BTC</code> — свежие новости (CoinDesk, CoinTelegraph и др.)\n"
+        "/news <code>BTC</code> — свежие новости\n"
         "/feargreed — индекс страха и жадности\n"
         "/history — история последних сигналов\n"
-        "/coins — список отслеживаемых монет\n\n"
+        "/coins — все 30 отслеживаемых монет\n\n"
         "📦 <b>Портфель:</b>\n"
         "/portfolio — мои позиции + P&L + сигналы\n"
         "/add <code>BTC 0.1 63500</code> — добавить позицию\n"
         "/remove <code>BTC</code> — удалить позицию\n\n"
-        "💡 <b>Монеты:</b> BTC, ETH, SOL, BNB, DOGE\n\n"
-        "⏰ Авто-отчёты каждые 4 ч. | 🚨 Алерты при BUY_ZONE / STRONG_SETUP"
+        "⏰ <b>Авто-алерты каждый час</b> по 30 монетам\n"
+        "🚨 Сигнал при BUY\_ZONE / STRONG\_SETUP / EVENT\_RISK"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
