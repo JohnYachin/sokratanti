@@ -17,8 +17,15 @@ from telegram.constants import ParseMode
 logger = logging.getLogger(__name__)
 
 TRACKED_COINS = [
+    # Топ-10
     "btc", "eth", "bnb", "sol", "xrp",
     "doge", "ada", "avax", "link", "dot",
+    # Топ 11-20
+    "near", "ltc", "uni", "shib", "trx",
+    "bch", "atom", "xlm", "etc", "fil",
+    # Топ 21-30
+    "arb", "sui", "pepe", "apt", "hbar",
+    "icp", "vet", "mkr", "aave", "op",
 ]
 
 # Статусы, по которым шлём алерт
@@ -46,7 +53,7 @@ def schedule_jobs(app: Application):
     )
     app.job_queue.run_repeating(
         _check_signal_alerts,
-        interval=1800,
+        interval=3600,   # каждый час
         first=120,
         data={"user_id": user_id},
         name="signal_alerts",
@@ -69,7 +76,7 @@ def schedule_jobs(app: Application):
         name="weekly_optimize",
     )
     logger.info(
-        "Запланирован авто-отчёт каждые %.1f ч., алерты каждые 30 мин., трекинг каждый час, оптимизация по воскресеньям.",
+        "Запланирован авто-отчёт каждые %.1f ч., алерты каждый час, трекинг каждый час, оптимизация по воскресеньям.",
         interval_hours,
     )
 
