@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Crypto Analyzer — Топ 30 монет</title>
+  <meta name="description" content="Анализ топ-30 криптовалют: сигналы LONG и SHORT, RSI, тренд, объём."/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #090e1a;
+      --surface: #111827;
+      --surface2: #1a2235;
+      --border: #1f2d45;
+      --text: #e8edf5;
+      --muted: #6b7a99;
+      --long: #00d084;
+      --long-bg: rgba(0, 208, 132, 0.1);
+      --short: #ff4560;
+      --short-bg: rgba(255, 69, 96, 0.1);
+      --neutral: #f0b429;
+      --neutral-bg: rgba(240, 180, 41, 0.1);
+      --accent: #3b82f6;
+      --accent2: #8b5cf6;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ── HEADER ── */
+    header {
+      background: linear-gradient(135deg, #0d1b35 0%, #0a0f1e 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 20px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(12px);
+    }
+
+    .header-left h1 {
+      font-size: 22px;
+      font-weight: 800;
+      background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .header-left p {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    #last-update {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .refresh-btn {
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+      border: none;
+      border-radius: 8px;
+      color: white;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 8px 18px;
+      cursor: pointer;
+      transition: opacity .2s, transform .1s;
+    }
+    .refresh-btn:hover { opacity: .85; }
+    .refresh-btn:active { transform: scale(.97); }
+    .refresh-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* ── STATS BAR ── */
+    .stats-bar {
+      display: flex;
+      gap: 16px;
+      padding: 16px 32px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+    }
+
+    .stat-card {
+      flex: 0 0 auto;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 120px;
+    }
+
+    .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+    .stat-value { font-size: 20px; font-weight: 700; }
+    .stat-value.long  { color: var(--long); }
+    .stat-value.short { color: var(--short); }
+    .stat-value.neutral { color: var(--neutral); }
+    .stat-value.total { color: var(--accent); }
+
+    /* ── FILTERS ── */
+    .filters {
+      padding: 16px 32px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .filter-btn {
+      padding: 6px 16px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--muted);
+      font-size: 13px;
+      cursor: pointer;
+      transition: all .2s;
+      font-family: 'Inter', sans-serif;
+    }
+    .filter-btn:hover { border-color: var(--accent); color: var(--text); }
+    .filter-btn.active { background: var(--accent); border-color: var(--accent); color: white; font-weight: 600; }
+    .filter-btn.long-active  { background: var(--long); border-color: var(--long); color: #000; font-weight: 700; }
+    .filter-btn.short-active { background: var(--short); border-color: var(--short); color: white; font-weight: 700; }
+
+    /* ── GRID ── */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 16px;
+      padding: 16px 32px 40px;
+    }
+
+    .coin-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px;
+      cursor: pointer;
+      transition: transform .2s, box-shadow .2s, border-color .2s;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .coin-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      border-radius: 14px 14px 0 0;
+    }
+    .coin-card.long::before  { background: linear-gradient(90deg, var(--long), #00b368); }
+    .coin-card.short::before { background: linear-gradient(90deg, var(--short), #cc2040); }
+    .coin-card.neutral::before { background: linear-gradient(90deg, var(--neutral), #c8930a); }
+
+    .coin-card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 12px 40px rgba(0,0,0,.5);
+      border-color: #2a3a5a;
+    }
+
+    /* card header */
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+
+    .coin-info { display: flex; align-items: center; gap: 10px; }
+
+    .coin-icon {
+      width: 38px; height: 38px;
+      border-radius: 50%;
+      background: var(--surface2);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+
+    .coin-icon img { width: 34px; height: 34px; border-radius: 50%; }
+
+    .coin-name { font-size: 15px; font-weight: 700; }
+    .coin-symbol { font-size: 12px; color: var(--muted); text-transform: uppercase; margin-top: 1px; }
+    .coin-rank { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+    /* signal badge */
+    .signal-badge {
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: .5px;
+      display: flex; align-items: center; gap: 4px;
+    }
+    .signal-badge.long  { background: var(--long-bg); color: var(--long); border: 1px solid rgba(0,208,132,.3); }
+    .signal-badge.short { background: var(--short-bg); color: var(--short); border: 1px solid rgba(255,69,96,.3); }
+    .signal-badge.neutral { background: var(--neutral-bg); color: var(--neutral); border: 1px solid rgba(240,180,41,.3); }
+
+    /* price row */
+    .price-row {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .price { font-size: 22px; font-weight: 700; }
+    .change {
+      font-size: 14px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 6px;
+    }
+    .change.up   { background: var(--long-bg); color: var(--long); }
+    .change.down { background: var(--short-bg); color: var(--short); }
+
+    /* metrics grid */
+    .metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .metric {
+      background: var(--surface2);
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+    .metric-label { font-size: 10px; color: var(--muted); margin-bottom: 3px; text-transform: uppercase; letter-spacing: .4px; }
+    .metric-value { font-size: 13px; font-weight: 600; }
+    .metric-value.green { color: var(--long); }
+    .metric-value.red   { color: var(--short); }
+    .metric-value.yellow { color: var(--neutral); }
+
+    /* RSI bar */
+    .rsi-section { margin-bottom: 12px; }
+    .rsi-label-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
+    .rsi-label { font-size: 11px; color: var(--muted); }
+    .rsi-val   { font-size: 13px; font-weight: 700; }
+
+    .rsi-bar {
+      height: 6px;
+      background: var(--surface2);
+      border-radius: 3px;
+      position: relative;
+      overflow: visible;
+    }
+    .rsi-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width .6s ease;
+    }
+    .rsi-marker {
+      position: absolute;
+      top: -3px;
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      border: 2px solid var(--bg);
+      transform: translateX(-50%);
+      transition: left .6s ease;
+    }
+
+    /* reason tags */
+    .reasons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+    .reason-tag {
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: var(--surface2);
+      color: var(--muted);
+      border: 1px solid var(--border);
+    }
+
+    /* ── SKELETON ── */
+    .skeleton {
+      background: linear-gradient(90deg, var(--surface) 25%, var(--surface2) 50%, var(--surface) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.4s infinite;
+      border-radius: 8px;
+    }
+    @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+
+    .skeleton-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px;
+      height: 240px;
+    }
+
+    /* ── ERROR ── */
+    .error-banner {
+      margin: 32px;
+      padding: 20px 24px;
+      background: rgba(255,69,96,.1);
+      border: 1px solid rgba(255,69,96,.3);
+      border-radius: 12px;
+      color: var(--short);
+      text-align: center;
+      font-size: 14px;
+    }
+
+    /* ── COUNTDOWN ── */
+    .countdown {
+      font-size: 11px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .countdown-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--long);
+      animation: pulse 1s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    @media (max-width: 600px) {
+      header { padding: 14px 16px; }
+      .stats-bar, .filters, .grid { padding-left: 16px; padding-right: 16px; }
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <h1>🚀 Crypto Analyzer</h1>
+    <p>Топ-30 монет · Сигналы LONG / SHORT · Обновляется каждые 60 сек</p>
+  </div>
+  <div class="header-right">
+    <div class="countdown" id="countdown">
+      <div class="countdown-dot"></div>
+      <span id="countdown-text">Загрузка...</span>
+    </div>
+    <span id="last-update"></span>
+    <button class="refresh-btn" id="refresh-btn" onclick="loadData()">⟳ Обновить</button>
+  </div>
+</header>
+
+<div class="stats-bar" id="stats-bar">
+  <div class="stat-card"><div class="stat-label">Всего монет</div><div class="stat-value total" id="stat-total">—</div></div>
+  <div class="stat-card"><div class="stat-label">LONG сигналов</div><div class="stat-value long" id="stat-long">—</div></div>
+  <div class="stat-card"><div class="stat-label">SHORT сигналов</div><div class="stat-value short" id="stat-short">—</div></div>
+  <div class="stat-card"><div class="stat-label">Нейтральных</div><div class="stat-value neutral" id="stat-neutral">—</div></div>
+  <div class="stat-card"><div class="stat-label">Доминанта рынка</div><div class="stat-value" id="stat-dom" style="font-size:14px;color:var(--text)">—</div></div>
+</div>
+
+<div class="filters">
+  <button class="filter-btn active" id="f-all"   onclick="setFilter('all')">Все 30</button>
+  <button class="filter-btn"        id="f-long"  onclick="setFilter('long')">📈 LONG</button>
+  <button class="filter-btn"        id="f-short" onclick="setFilter('short')">📉 SHORT</button>
+  <button class="filter-btn"        id="f-neutral" onclick="setFilter('neutral')">⚖️ Нейтрально</button>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<script>
+const TOP_COINS = [
+  'bitcoin','ethereum','tether','binancecoin','solana',
+  'ripple','usd-coin','dogecoin','cardano','avalanche-2',
+  'chainlink','shiba-inu','tron','polkadot','bitcoin-cash',
+  'near','litecoin','uniswap','leo-token','wrapped-bitcoin',
+  'ethereum-classic','stellar','monero','pepe','sui',
+  'aptos','hedera-hashgraph','internet-computer','filecoin','arbitrum'
+];
+
+let allCoins = [];
+let filter = 'all';
+let countdown = 60;
+let countdownInterval = null;
+
+/* ──────────────── SIGNAL ENGINE ──────────────── */
+function calcRSI(price, high24, low24) {
+  // Simplified RSI approximation using position in 24h range
+  if (high24 === low24) return 50;
+  return ((price - low24) / (high24 - low24)) * 100;
+}
+
+function getSignal(coin) {
+  const change24 = coin.price_change_percentage_24h || 0;
+  const change7d  = coin.price_change_percentage_7d_in_currency || 0;
+  const vol = coin.total_volume || 0;
+  const mktCap = coin.market_cap || 1;
+  const volRatio = vol / mktCap;   // volume/mcap ratio
+  const high = coin.high_24h || coin.current_price;
+  const low  = coin.low_24h  || coin.current_price;
+  const price = coin.current_price || 0;
+
+  const rsi = calcRSI(price, high, low);
+
+  // Scoring system: +positive = LONG, -negative = SHORT
+  let score = 0;
+  let reasons = [];
+
+  // 24h price change
+  if (change24 > 5)  { score += 3; reasons.push('Рост 24ч +' + change24.toFixed(1) + '%'); }
+  else if (change24 > 2) { score += 2; reasons.push('Умер. рост 24ч'); }
+  else if (change24 > 0) { score += 1; }
+  else if (change24 < -5) { score -= 3; reasons.push('Падение 24ч ' + change24.toFixed(1) + '%'); }
+  else if (change24 < -2) { score -= 2; reasons.push('Умер. падение 24ч'); }
+  else if (change24 < 0) { score -= 1; }
+
+  // 7d trend
+  if (change7d > 10) { score += 2; reasons.push('Бычий тренд 7д'); }
+  else if (change7d > 3)  { score += 1; }
+  else if (change7d < -10){ score -= 2; reasons.push('Медвежий тренд 7д'); }
+  else if (change7d < -3) { score -= 1; }
+
+  // RSI zones
+  if (rsi < 30) { score += 2; reasons.push('RSI перепродан (' + rsi.toFixed(0) + ')'); }
+  else if (rsi < 45) { score += 1; reasons.push('RSI низкий'); }
+  else if (rsi > 70) { score -= 2; reasons.push('RSI перекуплен (' + rsi.toFixed(0) + ')'); }
+  else if (rsi > 55) { score -= 1; }
+
+  // Volume spike
+  if (volRatio > 0.15) { 
+    if (change24 > 0) { score += 2; reasons.push('Высокий объём (бычий)'); }
+    else { score -= 1; reasons.push('Высокий объём (медвежий)'); }
+  }
+
+  // Price vs 24h high (momentum)
+  const distFromHigh = ((high - price) / (high || 1)) * 100;
+  if (distFromHigh < 3 && change24 > 0) { score += 1; reasons.push('Вблизи максимума'); }
+  if (distFromHigh > 15 && change24 < 0){ score -= 1; }
+
+  let signal, strength;
+  if (score >= 4)      { signal = 'long';    strength = 'Сильный'; }
+  else if (score >= 2) { signal = 'long';    strength = 'Умеренный'; }
+  else if (score <= -4){ signal = 'short';   strength = 'Сильный'; }
+  else if (score <= -2){ signal = 'short';   strength = 'Умеренный'; }
+  else                 { signal = 'neutral'; strength = 'Нейтральный'; }
+
+  return { signal, strength, score, rsi, reasons: reasons.slice(0, 3) };
+}
+
+/* ──────────────── FORMAT HELPERS ──────────────── */
+function fmtPrice(n) {
+  if (!n) return '$0';
+  if (n >= 1000) return '$' + n.toLocaleString('ru-RU', {maximumFractionDigits: 0});
+  if (n >= 1)    return '$' + n.toFixed(2);
+  if (n >= 0.01) return '$' + n.toFixed(4);
+  return '$' + n.toFixed(6);
+}
+
+function fmtNum(n) {
+  if (!n) return '—';
+  if (n >= 1e9) return (n/1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return (n/1e6).toFixed(1) + 'M';
+  return n.toLocaleString();
+}
+
+function rsiColor(rsi) {
+  if (rsi < 30) return 'var(--long)';
+  if (rsi > 70) return 'var(--short)';
+  return 'var(--neutral)';
+}
+
+/* ──────────────── RENDER ──────────────── */
+function renderCard(coin, idx) {
+  const { signal, strength, score, rsi, reasons } = getSignal(coin);
+  const ch24 = coin.price_change_percentage_24h || 0;
+  const ch7d  = coin.price_change_percentage_7d_in_currency || 0;
+  const rsiPct = Math.min(Math.max(rsi, 0), 100);
+  const signalIcon = signal === 'long' ? '↑' : signal === 'short' ? '↓' : '→';
+  const signalLabel = signal === 'long' ? 'LONG' : signal === 'short' ? 'SHORT' : 'НЕЙТРАЛЬНО';
+  const chClass = ch24 >= 0 ? 'up' : 'down';
+  const chSign = ch24 >= 0 ? '+' : '';
+
+  return `
+  <div class="coin-card ${signal}" id="card-${coin.id}" onclick="void(0)">
+    <div class="card-header">
+      <div class="coin-info">
+        <div class="coin-icon">
+          <img src="${coin.image}" alt="${coin.name}" onerror="this.style.display='none';this.parentNode.textContent='🪙'"/>
+        </div>
+        <div>
+          <div class="coin-name">${coin.name}</div>
+          <div class="coin-symbol">${coin.symbol}</div>
+          <div class="coin-rank">#${coin.market_cap_rank || idx+1}</div>
+        </div>
+      </div>
+      <div class="signal-badge ${signal}">
+        <span>${signalIcon}</span>
+        <span>${signalLabel}</span>
+      </div>
+    </div>
+
+    <div class="price-row">
+      <div class="price">${fmtPrice(coin.current_price)}</div>
+      <div class="change ${chClass}">${chSign}${ch24.toFixed(2)}%</div>
+    </div>
+
+    <div class="metrics">
+      <div class="metric">
+        <div class="metric-label">7d Change</div>
+        <div class="metric-value ${ch7d >= 0 ? 'green' : 'red'}">${ch7d >= 0 ? '+' : ''}${ch7d.toFixed(1)}%</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Объём 24ч</div>
+        <div class="metric-value">$${fmtNum(coin.total_volume)}</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Мкт кап</div>
+        <div class="metric-value">$${fmtNum(coin.market_cap)}</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Макс 24ч</div>
+        <div class="metric-value">${fmtPrice(coin.high_24h)}</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Мин 24ч</div>
+        <div class="metric-value">${fmtPrice(coin.low_24h)}</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Сила сигн.</div>
+        <div class="metric-value ${signal === 'long' ? 'green' : signal === 'short' ? 'red' : 'yellow'}">${strength}</div>
+      </div>
+    </div>
+
+    <div class="rsi-section">
+      <div class="rsi-label-row">
+        <span class="rsi-label">RSI (14)</span>
+        <span class="rsi-val" style="color:${rsiColor(rsi)}">${rsi.toFixed(1)}</span>
+      </div>
+      <div class="rsi-bar">
+        <div class="rsi-fill" style="width:${rsiPct}%; background:${rsiColor(rsi)}; opacity:.7;"></div>
+        <div class="rsi-marker" style="left:${rsiPct}%; background:${rsiColor(rsi)};"></div>
+      </div>
+    </div>
+
+    <div class="reasons">
+      ${reasons.map(r => `<span class="reason-tag">${r}</span>`).join('')}
+      ${score > 0 ? `<span class="reason-tag" style="color:var(--long);border-color:rgba(0,208,132,.3)">Очки: +${score}</span>` : ''}
+      ${score < 0 ? `<span class="reason-tag" style="color:var(--short);border-color:rgba(255,69,96,.3)">Очки: ${score}</span>` : ''}
+    </div>
+  </div>`;
+}
+
+function renderSkeletons() {
+  const grid = document.getElementById('grid');
+  grid.innerHTML = Array(30).fill(0).map(() =>
+    `<div class="skeleton-card"><div class="skeleton" style="height:100%;border-radius:8px;"></div></div>`
+  ).join('');
+}
+
+function renderCoins(coins) {
+  const grid = document.getElementById('grid');
+  const filtered = filter === 'all' ? coins : coins.filter(c => getSignal(c).signal === filter);
+  if (filtered.length === 0) {
+    grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--muted);font-size:16px;">
+      Нет монет с выбранным фильтром
+    </div>`;
+    return;
+  }
+  grid.innerHTML = filtered.map((c, i) => renderCard(c, i)).join('');
+}
+
+function updateStats(coins) {
+  let long = 0, short = 0, neutral = 0;
+  coins.forEach(c => {
+    const s = getSignal(c).signal;
+    if (s === 'long') long++;
+    else if (s === 'short') short++;
+    else neutral++;
+  });
+  const dom = long > short ? `📈 Бычий (${long} LONG)` : short > long ? `📉 Медвежий (${short} SHORT)` : '⚖️ Смешанный';
+  document.getElementById('stat-total').textContent = coins.length;
+  document.getElementById('stat-long').textContent = long;
+  document.getElementById('stat-short').textContent = short;
+  document.getElementById('stat-neutral').textContent = neutral;
+  document.getElementById('stat-dom').textContent = dom;
+}
+
+/* ──────────────── FETCH ──────────────── */
+async function loadData() {
+  const btn = document.getElementById('refresh-btn');
+  btn.disabled = true;
+  btn.textContent = '⟳ Загружаю...';
+  renderSkeletons();
+
+  try {
+    const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${TOP_COINS.join(',')}&order=market_cap_desc&per_page=30&page=1&price_change_percentage=7d`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('API error ' + res.status);
+    const data = await res.json();
+
+    allCoins = data;
+    renderCoins(allCoins);
+    updateStats(allCoins);
+
+    const now = new Date();
+    document.getElementById('last-update').textContent = 'Обновлено: ' + now.toLocaleTimeString('ru-RU');
+    resetCountdown();
+  } catch(e) {
+    document.getElementById('grid').innerHTML = `
+      <div class="error-banner" style="grid-column:1/-1">
+        ⚠️ Ошибка загрузки данных: ${e.message}<br>
+        <small>CoinGecko API может иметь лимит запросов. Подожди 30 секунд и попробуй снова.</small>
+      </div>`;
+  }
+
+  btn.disabled = false;
+  btn.textContent = '⟳ Обновить';
+}
+
+/* ──────────────── FILTER ──────────────── */
+function setFilter(f) {
+  filter = f;
+  ['all','long','short','neutral'].forEach(x => {
+    const btn = document.getElementById('f-' + x);
+    btn.className = 'filter-btn';
+  });
+  const active = document.getElementById('f-' + f);
+  if (f === 'long')  active.className = 'filter-btn long-active';
+  else if (f === 'short') active.className = 'filter-btn short-active';
+  else active.className = 'filter-btn active';
+
+  renderCoins(allCoins);
+}
+
+/* ──────────────── COUNTDOWN ──────────────── */
+function resetCountdown() {
+  clearInterval(countdownInterval);
+  countdown = 60;
+  countdownInterval = setInterval(() => {
+    countdown--;
+    document.getElementById('countdown-text').textContent = `Авто-обновление через ${countdown}с`;
+    if (countdown <= 0) {
+      loadData();
+    }
+  }, 1000);
+}
+
+/* ──────────────── INIT ──────────────── */
+loadData();
+</script>
+</body>
+</html>
