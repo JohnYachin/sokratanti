@@ -39,9 +39,16 @@ TRACKED_COINS = [
     "icp", "vet", "mkr", "aave", "op",
 ]
 COIN_NAMES = {
-    "arb":  "Arbitrum",    "sui":  "Sui",          "pepe": "Pepe",
-    "apt":  "Aptos",       "hbar": "Hedera",      "icp":  "Internet Computer",
-    "vet":  "VeChain",     "mkr":  "Maker",        "aave": "Aave",
+    "btc":  "Bitcoin",           "eth":  "Ethereum",        "bnb":  "BNB",
+    "sol":  "Solana",            "xrp":  "Ripple",          "doge": "Dogecoin",
+    "ada":  "Cardano",           "avax": "Avalanche",       "link": "Chainlink",
+    "dot":  "Polkadot",          "near": "NEAR Protocol",   "ltc":  "Litecoin",
+    "uni":  "Uniswap",           "shib": "Shiba Inu",       "trx":  "TRON",
+    "bch":  "Bitcoin Cash",      "atom": "Cosmos",          "xlm":  "Stellar",
+    "etc":  "Ethereum Classic",  "fil":  "Filecoin",
+    "arb":  "Arbitrum",          "sui":  "Sui",             "pepe": "Pepe",
+    "apt":  "Aptos",             "hbar": "Hedera",          "icp":  "Internet Computer",
+    "vet":  "VeChain",           "mkr":  "Maker",           "aave": "Aave",
     "op":   "Optimism",
 }
 
@@ -304,97 +311,127 @@ async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @auth_required
 async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text(
-        "🔍 <b>Анализирую рынок...</b> (может занять 30-60 сек)",
+        "🔍 <b>Анализирую 30 монет...</b>\n⏳ Подождите 30-60 секунд",
         parse_mode=ParseMode.HTML,
     )
     try:
-        # Параллельно запрашиваем Fear&Greed и прогоняем все монеты
-        fg_task = asyncio.to_thread(get_fear_greed)
-        fg = await fg_task
+        # Fear & Greed
+        try:
+            fg = await asyncio.to_thread(get_fear_greed)
+            fg_line = f"{fg['emoji']} F&G: <b>{fg['value']}/100</b> — {fg['label_ru']}"
+        except Exception:
+            fg_line = "F&G: нет данных"
 
-        # Запускаем анализ всех монет конкурентно
+        # Запускаем все 30 монет параллельно
         tasks = [asyncio.to_thread(generate_signal, coin) for coin in TRACKED_COINS]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        parts = [
-            f"📊 <b>Анализ рынка</b>\n"
-            f"{fg['emoji']} Fear &amp; Greed: <b>{fg['value']}/100</b> — {fg['label_ru']}"
-        ]
+        import datetime as _dt
+        now_str = _dt.datetime.now().strftime("%H:%M %d.%m")
 
-        best_coin = None
-        best_score = -1
+        longs, shorts, neutral, errors = [], [], [], []
+
+        def fp(v):
+            if v is None: return "—"
+            if v >= 1000: return f"${v:,.0f}"
+            if v >= 1:    return f"${v:,.2f}"
+            return f"${v:.5f}"
+
+        def pct(entry, target):
+            if not entry or not target: return ""
+            p = (target - entry) / entry * 100
+            return f"({'+'if p>=0 else ''}{p:.1f}%)"
 
         for coin, result in zip(TRACKED_COINS, results):
             if isinstance(result, Exception):
-                parts.append(f"⚠️ <b>{coin.upper()}</b>: ошибка — {result}")
+                errors.append(f"⚠️ {coin.upper()}: ошибка")
                 continue
 
-            setup_score = result.get("setup_score", 0)
-            label_ru = result.get("label_ru", result["signal"])
-            emoji = result["emoji"]
-            trend = result.get("trend", "unknown")
-
-            # Прогресс-бар 5 блоков
-            filled5 = round(setup_score / 20)
-            bar5 = "█" * filled5 + "░" * (5 - filled5)
+            status    = result.get("status", "NO_EDGE")
+            direction = result.get("direction", "NEUTRAL")
+            score     = result.get("setup_score", 0)
+            short_score = result.get("short_score", 0)
+            emoji_s   = result.get("emoji", "📊")
+            action    = result.get("action", "НЕТ СИГНАЛА")
+            trend     = result.get("trend", "unknown")
+            ind       = result.get("indicators", {})
+            rsi       = ind.get("rsi")
+            plan      = result.get("trading_plan")
+            short_plan = result.get("short_plan")
 
             trend_icon = {"bullish": "📈", "bearish": "📉", "neutral": "➡️"}.get(trend, "❓")
+            rsi_str    = f"RSI {rsi:.0f}" if rsi else ""
 
-            # Цена
-            try:
-                price_data = await asyncio.to_thread(get_price, coin)
-                price = price_data["price_usd"]
-                ch = price_data["change_24h"]
-                price_line = f"💵 <code>${price:,.4f}</code>  {'📈' if ch >= 0 else '📉'}{ch:+.1f}%\n"
-            except Exception:
-                price_line = ""
-
-            block = (
-                f"\n{emoji} <b>{coin.upper()} — {label_ru}</b>\n"
-                f"<code>[{bar5}]</code> {setup_score}/100  {trend_icon}\n"
-                f"{price_line}"
-            )
-
-            # Торговый план если есть
-            plan = result.get("trading_plan")
-            if plan and plan.setup_valid:
-                def fmt(v):
-                    if v is None: return "—"
-                    return f"${v:,.2f}" if v >= 1 else f"${v:.5f}"
-                rr = f"1:{plan.risk_reward:.1f}" if plan.risk_reward else "—"
-                block += (
-                    f"  📐 Вход: <code>{fmt(plan.entry_low)}–{fmt(plan.entry_high)}</code>\n"
-                    f"  🚫 SL: <code>{fmt(plan.stop_loss)}</code>  "
-                    f"🎯 T1 ({rr}): <code>{fmt(plan.target_1)}</code>\n"
+            if direction == "LONG" and plan and plan.setup_valid:
+                em = (plan.entry_low + plan.entry_high) / 2
+                longs.append(
+                    f"\n🟢 <b>{coin.upper()}</b> {trend_icon} {score}/100 | {rsi_str}"
+                    f"\n  🎯 {action}"
+                    f"\n  📥 Вход: <code>{fp(plan.entry_low)} — {fp(plan.entry_high)}</code>"
+                    f"\n  🛑 SL: <code>{fp(plan.stop_loss)}</code> {pct(em, plan.stop_loss)}"
+                    f"\n  ✅ TP1: <code>{fp(plan.target_1)}</code> {pct(em, plan.target_1)}"
+                    + (f"\n  🚀 TP2: <code>{fp(plan.target_2)}</code> {pct(em, plan.target_2)}" if plan.target_2 else "")
+                    + f"\n  ⚖️ R/R: 1:{plan.risk_reward:.1f}" if plan.risk_reward else ""
                 )
-            elif result.get("reasons"):
-                top_reason = result["reasons"][0]
-                block += f"  <i>{top_reason}</i>\n"
 
-            parts.append(block)
+            elif direction == "SHORT" and short_plan and short_plan.setup_valid:
+                em = (short_plan.entry_low + short_plan.entry_high) / 2
+                shorts.append(
+                    f"\n🔴 <b>{coin.upper()}</b> {trend_icon} {short_score}/100 | {rsi_str}"
+                    f"\n  🎯 {action}"
+                    f"\n  📤 Шорт: <code>{fp(short_plan.entry_low)} — {fp(short_plan.entry_high)}</code>"
+                    f"\n  🛑 SL: <code>{fp(short_plan.stop_loss)}</code> {pct(em, short_plan.stop_loss)}"
+                    f"\n  ✅ TP1: <code>{fp(short_plan.target_1)}</code> {pct(em, short_plan.target_1)}"
+                    + (f"\n  🚀 TP2: <code>{fp(short_plan.target_2)}</code> {pct(em, short_plan.target_2)}" if short_plan.target_2 else "")
+                    + f"\n  ⚖️ R/R: 1:{short_plan.risk_reward:.1f}" if short_plan.risk_reward else ""
+                )
 
-            if setup_score > best_score and result.get("status") in ("BUY_ZONE", "STRONG_SETUP"):
-                best_score = setup_score
-                best_coin = coin
+            else:
+                # Монета без чёткого сигнала
+                bar = "█" * round(score/20) + "░" * (5 - round(score/20))
+                neutral.append(f"  {emoji_s} <b>{coin.upper()}</b> [{bar}] {score}/100 {trend_icon} {rsi_str}")
+
+        # ── Шлём сообщение 1: шапка + LONG ───────────────────────────────────
+        header = (
+            f"📊 <b>АНАЛИЗ 30 МОНЕТ — {now_str}</b>\n"
+            f"{fg_line}\n"
+            f"🟢 LONG: <b>{len(longs)}</b>  🔴 SHORT: <b>{len(shorts)}</b>  "
+            f"⚪ Нейтральных: <b>{len(neutral)}</b>"
+        )
+
+        await msg.edit_text(header, parse_mode=ParseMode.HTML)
+
+        if longs:
+            long_text = "🟢 <b>LONG — ТОЧКИ ВХОДА:</b>\n" + "\n".join(longs)
+            # Режем если > 4096
+            if len(long_text) > 4000:
+                long_text = long_text[:3950] + "\n<i>...ещё монеты</i>"
+            await update.message.reply_text(long_text, parse_mode=ParseMode.HTML)
+
+        if shorts:
+            short_text = "🔴 <b>SHORT — ТОЧКИ ВХОДА:</b>\n" + "\n".join(shorts)
+            if len(short_text) > 4000:
+                short_text = short_text[:3950] + "\n<i>...ещё монеты</i>"
+            await update.message.reply_text(short_text, parse_mode=ParseMode.HTML)
+
+        if neutral:
+            neutral_text = "⚪ <b>Без чёткого сигнала:</b>\n" + "\n".join(neutral)
+            if len(neutral_text) > 4000:
+                neutral_text = neutral_text[:3950] + "\n<i>...ещё монеты</i>"
+            await update.message.reply_text(neutral_text, parse_mode=ParseMode.HTML)
 
         # Итог
-        if best_coin:
-            parts.append(
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"🎯 <b>Лучший сетап: {best_coin.upper()}</b> ({best_score}/100)"
-            )
-        else:
-            parts.append("━━━━━━━━━━━━━━━━━━\n🟡 <b>Нет чёткого сигнала — наблюдаем</b>")
-
-        parts.append("<i>Не финансовый совет. Управляй риском.</i>")
-        await msg.edit_text("\n".join(parts), parse_mode=ParseMode.HTML)
+        summary = "<i>Данные: Binance 1h+4h+1d | Не финансовый совет.</i>"
+        await update.message.reply_text(summary, parse_mode=ParseMode.HTML)
 
     except Exception as e:
         logger.error("scan error: %s", e)
         await msg.edit_text(f"❌ Ошибка: <code>{e}</code>", parse_mode=ParseMode.HTML)
 
 
+
 # ── /sentiment ────────────────────────────────────────────────────────────────
+
 @auth_required
 async def cmd_sentiment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     coin = (context.args[0] if context.args else "btc").lower()
