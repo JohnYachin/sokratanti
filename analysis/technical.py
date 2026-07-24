@@ -227,3 +227,219 @@ def get_trend_direction(ind: dict) -> str:
         return "bearish"
     else:
         return "neutral"
+
+
+# ── Свечные паттерны (Стив Нисон) ─────────────────────────────────────────────
+
+def detect_candle_patterns(df: pd.DataFrame) -> list[dict]:
+    """
+    Распознаёт ключевые свечные паттерны на последних 3 свечах.
+    Возвращает список найденных паттернов с направлением и силой (1-5).
+    """
+    if df is None or len(df) < 3:
+        return []
+
+    patterns = []
+
+    # Последние 3 свечи
+    c0 = df.iloc[-1]  # текущая
+    c1 = df.iloc[-2]  # предыдущая
+    c2 = df.iloc[-3]  # за день до
+
+    o0, h0, l0, cl0 = c0["open"], c0["high"], c0["low"], c0["close"]
+    o1, h1, l1, cl1 = c1["open"], c1["high"], c1["low"], c1["close"]
+    o2, h2, l2, cl2 = c2["open"], c2["high"], c2["low"], c2["close"]
+
+    body0 = abs(cl0 - o0)
+    body1 = abs(cl1 - o1)
+    body2 = abs(cl2 - o2)
+    range0 = h0 - l0 if h0 > l0 else 0.0001
+    range1 = h1 - l1 if h1 > l1 else 0.0001
+
+    upper_shadow0 = h0 - max(o0, cl0)
+    lower_shadow0 = min(o0, cl0) - l0
+    upper_shadow1 = h1 - max(o1, cl1)
+    lower_shadow1 = min(o1, cl1) - l1
+
+    is_bull0 = cl0 > o0
+    is_bull1 = cl1 > o1
+    is_bear0 = cl0 < o0
+    is_bear1 = cl1 < o1
+
+    # ── МОЛОТ (Hammer) — бычий разворот на дне ────────────────────────────────
+    if (is_bull0 and
+        lower_shadow0 >= body0 * 2.0 and
+        upper_shadow0 <= body0 * 0.3 and
+        body0 > 0):
+        patterns.append({
+            "name": "Молот", "direction": "LONG", "strength": 3,
+            "description": "Молот — бычий разворот. Продавцы отвергнуты, покупатели контролируют."
+        })
+
+    # ── ВИСЕЛЬНИК (Hanging Man) — медвежий разворот на вершине ───────────────
+    if (is_bear0 and
+        lower_shadow0 >= body0 * 2.0 and
+        upper_shadow0 <= body0 * 0.3 and
+        body0 > 0):
+        patterns.append({
+            "name": "Висельник", "direction": "SHORT", "strength": 3,
+            "description": "Висельник — медвежий разворот. Несмотря на отскок, закрытие слабое."
+        })
+
+    # ── ПАДАЮЩАЯ ЗВЕЗДА (Shooting Star) — шорт сигнал ───────────────────────
+    if (is_bear0 and
+        upper_shadow0 >= body0 * 2.0 and
+        lower_shadow0 <= body0 * 0.3 and
+        body0 > 0):
+        patterns.append({
+            "name": "Падающая звезда", "direction": "SHORT", "strength": 3,
+            "description": "Падающая звезда — отвержение высоких цен. Шортить при подтверждении."
+        })
+
+    # ── БЫЧЬЕ ПОГЛОЩЕНИЕ (Bullish Engulfing) ─────────────────────────────────
+    if (is_bull0 and is_bear1 and
+        o0 <= cl1 and cl0 >= o1 and
+        body0 > body1):
+        patterns.append({
+            "name": "Бычье поглощение", "direction": "LONG", "strength": 4,
+            "description": "Бычье поглощение — покупатели полностью перекрыли продавцов. Сильный сигнал."
+        })
+
+    # ── МЕДВЕЖЬЕ ПОГЛОЩЕНИЕ (Bearish Engulfing) ──────────────────────────────
+    if (is_bear0 and is_bull1 and
+        o0 >= cl1 and cl0 <= o1 and
+        body0 > body1):
+        patterns.append({
+            "name": "Медвежье поглощение", "direction": "SHORT", "strength": 4,
+            "description": "Медвежье поглощение — продавцы полностью перекрыли покупателей. Шортить."
+        })
+
+    # ── ДОДЖИ ─────────────────────────────────────────────────────────────────
+    if body0 <= range0 * 0.1:
+        # Доджи = нерешительность, направление зависит от контекста
+        if is_bull1:
+            patterns.append({
+                "name": "Доджи после роста", "direction": "SHORT", "strength": 2,
+                "description": "Доджи после бычьей свечи — нерешительность на вершине. Возможен разворот вниз."
+            })
+        elif is_bear1:
+            patterns.append({
+                "name": "Доджи после падения", "direction": "LONG", "strength": 2,
+                "description": "Доджи после медвежьей свечи — нерешительность на дне. Возможен разворот вверх."
+            })
+
+    # ── УТРЕННЯЯ ЗВЕЗДА (Morning Star) — 3 свечи ─────────────────────────────
+    if (is_bear2 and
+        body1 < body2 * 0.5 and   # маленькое тело в середине
+        is_bull0 and
+        cl0 > (o2 + cl2) / 2):    # закрытие выше середины первой свечи
+        patterns.append({
+            "name": "Утренняя звезда", "direction": "LONG", "strength": 5,
+            "description": "Утренняя звезда — один из сильнейших сигналов разворота вверх по Нисону."
+        })
+
+    # ── ВЕЧЕРНЯЯ ЗВЕЗДА (Evening Star) — 3 свечи ─────────────────────────────
+    if (is_bull2 and
+        body1 < body2 * 0.5 and
+        is_bear0 and
+        cl0 < (o2 + cl2) / 2):
+        patterns.append({
+            "name": "Вечерняя звезда", "direction": "SHORT", "strength": 5,
+            "description": "Вечерняя звезда — один из сильнейших сигналов разворота вниз по Нисону."
+        })
+
+    return patterns
+
+
+def detect_rsi_divergence(df: pd.DataFrame, rsi_series: pd.Series,
+                           lookback: int = 14) -> dict:
+    """
+    Определяет дивергенцию RSI — самый надёжный сигнал по Элдеру.
+    
+    Бычья: цена делает новый минимум, RSI — нет → ПОКУПАТЬ
+    Медвежья: цена делает новый максимум, RSI — нет → ПРОДАВАТЬ
+    """
+    result = {"bullish": False, "bearish": False, "description": ""}
+
+    if df is None or rsi_series is None or len(df) < lookback:
+        return result
+
+    try:
+        prices = df["close"].iloc[-lookback:]
+        rsi_vals = rsi_series.iloc[-lookback:]
+
+        # Находим последние два минимума цены
+        price_lows_idx = []
+        for i in range(1, len(prices) - 1):
+            if prices.iloc[i] < prices.iloc[i-1] and prices.iloc[i] < prices.iloc[i+1]:
+                price_lows_idx.append(i)
+
+        # Находим последние два максимума цены
+        price_highs_idx = []
+        for i in range(1, len(prices) - 1):
+            if prices.iloc[i] > prices.iloc[i-1] and prices.iloc[i] > prices.iloc[i+1]:
+                price_highs_idx.append(i)
+
+        # Бычья дивергенция: цена делает более низкий минимум, RSI — более высокий
+        if len(price_lows_idx) >= 2:
+            i1, i2 = price_lows_idx[-2], price_lows_idx[-1]
+            if prices.iloc[i2] < prices.iloc[i1] and rsi_vals.iloc[i2] > rsi_vals.iloc[i1]:
+                result["bullish"] = True
+                result["description"] = (
+                    f"🔑 Бычья дивергенция RSI: цена снижается, RSI повышается — "
+                    f"покупатели усиливаются. Сигнал разворота вверх."
+                )
+
+        # Медвежья дивергенция: цена делает более высокий максимум, RSI — более низкий
+        if len(price_highs_idx) >= 2:
+            i1, i2 = price_highs_idx[-2], price_highs_idx[-1]
+            if prices.iloc[i2] > prices.iloc[i1] and rsi_vals.iloc[i2] < rsi_vals.iloc[i1]:
+                result["bearish"] = True
+                result["description"] = (
+                    f"🔑 Медвежья дивергенция RSI: цена растёт, RSI падает — "
+                    f"покупатели слабеют. Сигнал разворота вниз."
+                )
+
+    except Exception:
+        pass
+
+    return result
+
+
+def detect_bb_squeeze(df: pd.DataFrame, ind: dict) -> dict:
+    """
+    Определяет сжатие Боллинджера (Squeeze) — накопление энергии перед движением.
+    """
+    result = {"squeeze": False, "expanding": False, "description": ""}
+
+    bb_width = ind.get("bb_width")
+    if bb_width is None or df is None or len(df) < 20:
+        return result
+
+    try:
+        # Среднее BB width за последние 20 свечей
+        from ta.volatility import BollingerBands
+        bb_ind = BollingerBands(close=df["close"], window=20, window_dev=2)
+        width_series = bb_ind.bollinger_wband()
+
+        avg_width = float(width_series.iloc[-20:-1].mean())
+        current_width = float(width_series.iloc[-1])
+
+        if avg_width > 0:
+            ratio = current_width / avg_width
+            if ratio < 0.7:  # ширина < 70% от среднего
+                result["squeeze"] = True
+                result["description"] = (
+                    "⚡ Сжатие Боллинджера (Squeeze): волатильность минимальная. "
+                    "Готовься к сильному движению в ближайшее время!"
+                )
+            elif ratio > 1.5:  # ширина > 150% от среднего
+                result["expanding"] = True
+                result["description"] = (
+                    "📈 Расширение Боллинджера: волатильность нарастает. "
+                    "Импульс активен, торгуй по тренду."
+                )
+    except Exception:
+        pass
+
+    return result

@@ -337,11 +337,36 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
     if adx is not None:
         if adx >= 25:
             reasons.append(f"ADX {adx:.1f} — сильный тренд")
-
         elif adx >= 20:
             reasons.append(f"ADX {adx:.1f} — умеренный тренд")
         else:
             reasons.append(f"ADX {adx:.1f} — тренд слабый (боковик)")
+
+    # ── Свечные паттерны (Нисон) ────────────────────────────────────────────
+    try:
+        from analysis.technical import detect_candle_patterns, detect_rsi_divergence, detect_bb_squeeze
+        from ta.momentum import RSIIndicator
+
+        candle_patterns = detect_candle_patterns(df_1d)
+        for pat in candle_patterns:
+            reasons.append(f"🕯️ {pat['name']}: {pat['description']}")
+
+        # RSI дивергенция (самый надёжный сигнал по Элдеру)
+        if len(df_1d) >= 14:
+            rsi_series = RSIIndicator(close=df_1d["close"], window=14).rsi()
+            divergence = detect_rsi_divergence(df_1d, rsi_series)
+            if divergence["bullish"]:
+                reasons.insert(0, divergence["description"])  # в начало — важнейший сигнал
+            elif divergence["bearish"]:
+                reasons.insert(0, divergence["description"])
+
+        # BB Squeeze
+        bb_squeeze = detect_bb_squeeze(df_1d, ind_1d)
+        if bb_squeeze["squeeze"] or bb_squeeze["expanding"]:
+            reasons.append(bb_squeeze["description"])
+
+    except Exception as _pe:
+        logger.debug("Pattern detection skip: %s", _pe)
 
     # ── 4h подтверждение ─────────────────────────────────────────────────────
     if ind_4h:
