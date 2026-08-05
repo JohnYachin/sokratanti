@@ -1,0 +1,26 @@
+# Stage 1: Builder
+FROM python:3.12-slim as builder
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --user --no-cache-dir -r requirements.txt
+
+# Stage 2: Runtime
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN useradd -m -r -u 1000 caios
+USER caios
+
+COPY --from=builder /root/.local /home/caios/.local
+ENV PATH=/home/caios/.local/bin:$PATH
+
+COPY . .
+
+CMD ["python", "-m", "app.telegram.bot"]
