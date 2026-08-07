@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CAIOS — Crypto AI Investment OS</title>
+<meta name="description" content="AI-powered crypto investment dashboard with 20-agent council analysis">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:       #080c14;
+    --bg2:      #0d1220;
+    --bg3:      #111827;
+    --border:   #1e2a3d;
+    --accent:   #3b82f6;
+    --accent2:  #6366f1;
+    --green:    #10b981;
+    --red:      #ef4444;
+    --yellow:   #f59e0b;
+    --text:     #e2e8f0;
+    --muted:    #64748b;
+    --glow:     rgba(59,130,246,0.15);
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Background ── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0; z-index: 0;
+    background: radial-gradient(ellipse 80% 60% at 50% -10%, rgba(59,130,246,0.08) 0%, transparent 60%),
+                radial-gradient(ellipse 40% 40% at 85% 20%, rgba(99,102,241,0.06) 0%, transparent 50%);
+    pointer-events: none;
+  }
+
+  /* ── Layout ── */
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+
+  /* ── Header ── */
+  header {
+    padding: 20px 0 16px;
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(12px);
+    position: sticky; top: 0; z-index: 100;
+    background: rgba(8,12,20,0.85);
+  }
+  .header-inner {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  }
+  .logo {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 20px; font-weight: 800; letter-spacing: -0.5px;
+  }
+  .logo-icon {
+    width: 36px; height: 36px; border-radius: 10px;
+    background: linear-gradient(135deg, #3b82f6, #6366f1);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; box-shadow: 0 0 20px rgba(59,130,246,0.4);
+  }
+  .logo span { color: var(--accent); }
+  .header-meta {
+    display: flex; align-items: center; gap: 20px;
+    font-size: 13px; color: var(--muted);
+  }
+  .live-badge {
+    display: flex; align-items: center; gap: 6px;
+    background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.3);
+    padding: 4px 10px; border-radius: 20px; color: var(--green); font-size: 12px; font-weight: 500;
+  }
+  .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.8)} }
+
+  /* ── Stats bar ── */
+  .stats-bar {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+    padding: 20px 0;
+  }
+  .stat-card {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 14px; padding: 16px 20px;
+    transition: border-color .2s, transform .2s;
+    cursor: default;
+  }
+  .stat-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .stat-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; margin-bottom: 6px; }
+  .stat-value { font-size: 24px; font-weight: 700; }
+  .stat-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .text-green { color: var(--green); }
+  .text-red { color: var(--red); }
+  .text-yellow { color: var(--yellow); }
+  .text-accent { color: var(--accent); }
+
+  /* ── Section title ── */
+  .section-title {
+    font-size: 13px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 1px; color: var(--muted);
+    margin: 8px 0 14px; display: flex; align-items: center; gap: 8px;
+  }
+  .section-title::after { content:''; flex:1; height:1px; background: var(--border); }
+
+  /* ── Coins grid ── */
+  .coins-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 32px; }
+  @media(max-width:1100px){ .coins-grid { grid-template-columns: repeat(3,1fr); } }
+  @media(max-width:700px){ .coins-grid { grid-template-columns: repeat(2,1fr); } stats-bar { grid-template-columns: repeat(2,1fr); } }
+
+  .coin-card {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 16px; padding: 18px;
+    transition: all .25s; cursor: pointer; position: relative; overflow: hidden;
+  }
+  .coin-card::before {
+    content: ''; position: absolute; inset: 0; opacity: 0;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    transition: opacity .25s;
+  }
+  .coin-card:hover { border-color: var(--accent); transform: translateY(-3px); box-shadow: 0 8px 30px rgba(59,130,246,0.15); }
+  .coin-card:hover::before { opacity: 0.05; }
+  .coin-card.buy { border-color: rgba(16,185,129,0.4); }
+  .coin-card.sell { border-color: rgba(239,68,68,0.4); }
+  .coin-card.strong_buy { border-color: var(--green); box-shadow: 0 0 20px rgba(16,185,129,0.2); }
+  .coin-card.strong_sell { border-color: var(--red); box-shadow: 0 0 20px rgba(239,68,68,0.15); }
+
+  .coin-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+  .coin-symbol { font-size: 16px; font-weight: 700; }
+  .coin-name { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .signal-badge {
+    font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 6px;
+    text-transform: uppercase; letter-spacing: .5px;
+  }
+  .sig-buy { background: rgba(16,185,129,0.15); color: var(--green); }
+  .sig-sell { background: rgba(239,68,68,0.15); color: var(--red); }
+  .sig-hold { background: rgba(245,158,11,0.15); color: var(--yellow); }
+  .sig-none { background: rgba(100,116,139,0.15); color: var(--muted); }
+
+  .coin-price { font-size: 20px; font-weight: 700; font-family: 'JetBrains Mono', monospace; margin-bottom: 4px; }
+  .coin-change { font-size: 13px; font-weight: 500; }
+  .coin-footer { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .conf-bar-wrap { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+  .conf-bar { flex: 1; height: 4px; background: var(--bg3); border-radius: 2px; overflow: hidden; }
+  .conf-fill { height: 100%; border-radius: 2px; transition: width 1s ease; }
+  .fill-green { background: var(--green); }
+  .fill-red { background: var(--red); }
+  .fill-yellow { background: var(--yellow); }
+  .fill-muted { background: var(--muted); }
+
+  /* ── Council panel ── */
+  .council-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 32px; }
+  @media(max-width:900px){ .council-grid { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 16px; padding: 24px;
+  }
+  .panel-title { font-size: 15px; font-weight: 700; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+  .panel-title .icon { font-size: 18px; }
+
+  /* ── Signal table ── */
+  .signal-table { width: 100%; border-collapse: collapse; }
+  .signal-table th {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .8px;
+    color: var(--muted); padding: 0 12px 10px; text-align: left; border-bottom: 1px solid var(--border);
+  }
+  .signal-table td { padding: 12px; border-bottom: 1px solid rgba(30,42,61,0.5); font-size: 13px; }
+  .signal-table tr:last-child td { border-bottom: none; }
+  .signal-table tr:hover td { background: rgba(59,130,246,0.04); }
+  .symbol-cell { font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+  .score-cell { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+
+  /* ── Agents list ── */
+  .agents-list { display: flex; flex-direction: column; gap: 8px; }
+  .agent-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 10px; background: var(--bg3); }
+  .agent-icon { font-size: 14px; }
+  .agent-name { font-size: 12px; font-weight: 500; flex: 1; }
+  .agent-type { font-size: 10px; color: var(--muted); background: var(--bg); padding: 2px 6px; border-radius: 4px; }
+
+  /* ── Refresh button ── */
+  .refresh-btn {
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border: none; color: white; padding: 8px 18px; border-radius: 10px;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    transition: all .2s; display: flex; align-items: center; gap: 6px;
+  }
+  .refresh-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 15px rgba(59,130,246,0.4); }
+  .refresh-btn:active { transform: translateY(0); }
+  .spinning { animation: spin 1s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Loading skeleton ── */
+  .skeleton { background: linear-gradient(90deg, var(--bg3) 25%, var(--bg2) 50%, var(--bg3) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 6px; }
+  @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+
+  /* ── Footer ── */
+  footer { padding: 24px 0; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; display: flex; justify-content: space-between; }
+  #last-update { font-family: 'JetBrains Mono', monospace; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="header-inner">
+      <div class="logo">
+        <div class="logo-icon">🤖</div>
+        <div>CA<span>IOS</span></div>
+      </div>
+      <div class="header-meta">
+        <div class="live-badge"><div class="live-dot"></div> LIVE</div>
+        <span id="last-update">Загрузка...</span>
+        <button class="refresh-btn" id="refresh-btn" onclick="loadAll()">
+          <span id="refresh-icon">↻</span> Обновить
+        </button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap" style="padding-top:24px; padding-bottom:40px;">
+
+  <!-- Stats bar -->
+  <div class="stats-bar">
+    <div class="stat-card">
+      <div class="stat-label">Монет</div>
+      <div class="stat-value text-accent" id="stat-coins">—</div>
+      <div class="stat-sub">Топ-10 по капитализации</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">AI Сигналов</div>
+      <div class="stat-value text-green" id="stat-signals">—</div>
+      <div class="stat-sub">Активных в базе</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Сигналов BUY</div>
+      <div class="stat-value text-green" id="stat-buy">—</div>
+      <div class="stat-sub">Покупка от AI Council</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Агентов</div>
+      <div class="stat-value text-accent">20</div>
+      <div class="stat-sub">GPT-4o × 5 типов × 4</div>
+    </div>
+  </div>
+
+  <!-- Coins -->
+  <div class="section-title">📊 Рынок — Топ 10 монет</div>
+  <div class="coins-grid" id="coins-grid">
+    <div class="coin-card skeleton" style="height:160px"></div>
+    <div class="coin-card skeleton" style="height:160px"></div>
+    <div class="coin-card skeleton" style="height:160px"></div>
+    <div class="coin-card skeleton" style="height:160px"></div>
+    <div class="coin-card skeleton" style="height:160px"></div>
+    <div class="coin-card skeleton" style="height:160px"></div>
+    <div class="coin-card skeleton" style="height:160px"></div>
+    <div class="coin-card skeleton" style="height:160px"></div>
+    <div class="coin-card skeleton" style="height:160px"></div>
+    <div class="coin-card skeleton" style="height:160px"></div>
+  </div>
+
+  <!-- Council -->
+  <div class="section-title">🤖 AI Council — Сигналы и агенты</div>
+  <div class="council-grid">
+    <div class="panel">
+      <div class="panel-title"><span class="icon">📈</span> Сигналы AI Council</div>
+      <table class="signal-table">
+        <thead>
+          <tr>
+            <th>Монета</th>
+            <th>Сигнал</th>
+            <th>Уверенность</th>
+            <th>AI Score</th>
+            <th>Цена</th>
+          </tr>
+        </thead>
+        <tbody id="signals-tbody">
+          <tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">Загрузка сигналов...</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <div class="panel-title"><span class="icon">🧠</span> Состав AI Council</div>
+      <div class="agents-list" id="agents-list">
+        <div class="agent-row"><span class="agent-icon">📊</span><span class="agent-name">Trend Analyst</span><span class="agent-type">×4</span></div>
+        <div class="agent-row"><span class="agent-icon">🌐</span><span class="agent-name">Macro Economist</span><span class="agent-type">×4</span></div>
+        <div class="agent-row"><span class="agent-icon">😱</span><span class="agent-name">Sentiment Analyst</span><span class="agent-type">×4</span></div>
+        <div class="agent-row"><span class="agent-icon">⛓️</span><span class="agent-name">On-Chain Analyst</span><span class="agent-type">×4</span></div>
+        <div class="agent-row"><span class="agent-icon">🛡️</span><span class="agent-name">Risk Manager</span><span class="agent-type">×4</span></div>
+        <div style="margin-top:16px;padding:12px;background:var(--bg3);border-radius:10px;font-size:12px;color:var(--muted);">
+          <div style="font-weight:600;color:var(--text);margin-bottom:6px;">Как работает:</div>
+          <div>• 20 агентов анализируют каждую монету</div>
+          <div>• Взвешенный консенсус по 5 типам</div>
+          <div>• Обновление каждый час</div>
+          <div>• Сигналы сохраняются в Supabase</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  <div class="wrap" style="display:flex;justify-content:space-between;width:100%">
+    <span>CAIOS v1.0 — Crypto AI Investment OS • 20 GPT-4o Agents</span>
+    <span>VPS: srv1101476.hostinger.com • Supabase • CoinGecko</span>
+  </div>
+</footer>
+
+<script>
+const TOP_COINS = [
+  {symbol:'BTC',name:'Bitcoin',id:'bitcoin'},
+  {symbol:'ETH',name:'Ethereum',id:'ethereum'},
+  {symbol:'BNB',name:'BNB',id:'binancecoin'},
+  {symbol:'SOL',name:'Solana',id:'solana'},
+  {symbol:'XRP',name:'XRP',id:'ripple'},
+  {symbol:'ADA',name:'Cardano',id:'cardano'},
+  {symbol:'AVAX',name:'Avalanche',id:'avalanche-2'},
+  {symbol:'DOT',name:'Polkadot',id:'polkadot'},
+  {symbol:'MATIC',name:'Polygon',id:'matic-network'},
+  {symbol:'LINK',name:'Chainlink',id:'chainlink'},
+];
+
+const SB_URL = 'https://zrvsuwdlhnnfvqxxohex.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpydnN1d2RsaG5uZnZxeHhvaGV4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU1MTE0MDAsImV4cCI6MjEwMTA4NzQwMH0.dXsn9QAFArIm6gP447NrzsskLx3mV6LvSfO9WPyjLeo';
+
+const SIG_LABELS = {
+  'STRONG_BUY':  {label:'STRONG BUY', cls:'sig-buy'},
+  'BUY':         {label:'BUY',        cls:'sig-buy'},
+  'HOLD':        {label:'HOLD',       cls:'sig-hold'},
+  'SELL':        {label:'SELL',       cls:'sig-sell'},
+  'STRONG_SELL': {label:'STRONG SELL',cls:'sig-sell'},
+};
+
+let priceCache = {};
+let signalCache = {};
+
+async function fetchPrices() {
+  const ids = TOP_COINS.map(c => c.id).join(',');
+  const res = await fetch(
+    `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&order=market_cap_desc&sparkline=false`
+  );
+  const data = await res.json();
+  data.forEach(d => { priceCache[d.symbol.toUpperCase()] = d; });
+}
+
+async function fetchSignals() {
+  const res = await fetch(
+    `${SB_URL}/rest/v1/signals?is_active=eq.true&select=signal,confidence,score,price_at_signal,coins(symbol)`,
+    { headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` } }
+  );
+  const data = await res.json();
+  if (Array.isArray(data)) {
+    data.forEach(row => {
+      if (row.coins?.symbol) signalCache[row.coins.symbol] = row;
+    });
+  }
+}
+
+function getSignalClass(sig) {
+  if (!sig) return '';
+  return sig.toLowerCase().replace('_', '-');
+}
+
+function renderCoins() {
+  const grid = document.getElementById('coins-grid');
+  let buys = 0, total = 0;
+  grid.innerHTML = TOP_COINS.map(coin => {
+    const p = priceCache[coin.symbol] || {};
+    const s = signalCache[coin.symbol];
+    const price = p.current_price;
+    const ch = p.price_change_percentage_24h;
+    const sigInfo = s ? (SIG_LABELS[s.signal] || {label: s.signal, cls:'sig-none'}) : null;
+    const conf = s ? Math.round((s.confidence || 0) * 100) : 0;
+    const score = s ? parseFloat(s.score || 0).toFixed(3) : null;
+    const chPos = ch >= 0;
+    const cardClass = s ? s.signal.toLowerCase().replace('_','-') : '';
+    if (s?.signal?.includes('BUY')) buys++;
+    total++;
+    const fillClass = !s ? 'fill-muted' : s.signal.includes('BUY') ? 'fill-green' : s.signal.includes('SELL') ? 'fill-red' : 'fill-yellow';
+    return `
+    <div class="coin-card ${cardClass}" onclick="openSignal('${coin.symbol}')">
+      <div class="coin-header">
+        <div>
+          <div class="coin-symbol">${coin.symbol}</div>
+          <div class="coin-name">${coin.name}</div>
+        </div>
+        ${sigInfo ? `<div class="signal-badge ${sigInfo.cls}">${sigInfo.label}</div>` : '<div class="signal-badge sig-none">—</div>'}
+      </div>
+      <div class="coin-price">${price ? '$' + price.toLocaleString('en-US', {minimumFractionDigits:2,maximumFractionDigits: price > 1 ? 2 : 6}) : '—'}</div>
+      <div class="coin-change ${chPos ? 'text-green' : 'text-red'}">${ch != null ? (chPos ? '▲' : '▼') + ' ' + Math.abs(ch).toFixed(2) + '%' : '—'}</div>
+      <div class="coin-footer">
+        <div class="conf-bar-wrap">
+          <div class="conf-bar"><div class="conf-fill ${fillClass}" style="width:${conf}%"></div></div>
+          <span>${conf ? conf + '%' : '—'}</span>
+        </div>
+        ${score ? `<div style="font-size:10px;color:var(--muted);margin-top:4px;font-family:'JetBrains Mono',monospace;">score: ${score > 0 ? '+' : ''}${score}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('stat-coins').textContent = total;
+  document.getElementById('stat-buy').textContent = buys;
+}
+
+function renderSignalsTable() {
+  const tbody = document.getElementById('signals-tbody');
+  const signals = Object.entries(signalCache);
+  document.getElementById('stat-signals').textContent = signals.length;
+
+  if (!signals.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">Нет сигналов. Запустите AI Council.</td></tr>';
+    return;
+  }
+
+  const sorted = signals.sort((a,b) => {
+    const order = {'STRONG_BUY':0,'BUY':1,'HOLD':2,'SELL':3,'STRONG_SELL':4};
+    return (order[a[1].signal] ?? 5) - (order[b[1].signal] ?? 5);
+  });
+
+  tbody.innerHTML = sorted.map(([sym, s]) => {
+    const p = priceCache[sym];
+    const sigInfo = SIG_LABELS[s.signal] || {label: s.signal, cls:'sig-none'};
+    const conf = Math.round((s.confidence || 0) * 100);
+    const score = parseFloat(s.score || 0).toFixed(3);
+    const price = p?.current_price;
+    return `
+    <tr>
+      <td class="symbol-cell">${sym}</td>
+      <td><span class="signal-badge ${sigInfo.cls}">${sigInfo.label}</span></td>
+      <td>
+        <div class="conf-bar-wrap">
+          <div class="conf-bar" style="width:80px"><div class="conf-fill ${s.signal.includes('BUY') ? 'fill-green' : s.signal.includes('SELL') ? 'fill-red' : 'fill-yellow'}" style="width:${conf}%"></div></div>
+          <span>${conf}%</span>
+        </div>
+      </td>
+      <td class="score-cell" style="color:${score>0?'var(--green)':'var(--red)'}">${score > 0 ? '+' : ''}${score}</td>
+      <td class="score-cell">${price ? '$' + price.toLocaleString('en-US') : '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+function openSignal(sym) {
+  const s = signalCache[sym];
+  const p = priceCache[sym];
+  if (!s) { alert(`Нет AI сигнала для ${sym}. Совет запустится через час.`); return; }
+  const sigInfo = SIG_LABELS[s.signal] || {label: s.signal};
+  const conf = Math.round((s.confidence || 0) * 100);
+  const score = parseFloat(s.score || 0).toFixed(3);
+  const price = p?.current_price?.toLocaleString('en-US') || '—';
+  alert(`${sym} — ${sigInfo.label}\n\nЦена: $${price}\nУверенность: ${conf}%\nAI Score: ${score}\n\nAI Council (20 агентов)`);
+}
+
+async function loadAll() {
+  const btn = document.getElementById('refresh-btn');
+  const icon = document.getElementById('refresh-icon');
+  icon.classList.add('spinning');
+  btn.disabled = true;
+  try {
+    await Promise.all([fetchPrices(), fetchSignals()]);
+    renderCoins();
+    renderSignalsTable();
+    const now = new Date().toLocaleTimeString('ru-RU');
+    document.getElementById('last-update').textContent = `Обновлено в ${now}`;
+  } catch(e) {
+    console.error(e);
+    document.getElementById('last-update').textContent = `Ошибка: ${e.message}`;
+  } finally {
+    icon.classList.remove('spinning');
+    btn.disabled = false;
+  }
+}
+
+// Auto-refresh every 60s
+loadAll();
+setInterval(loadAll, 60000);
+</script>
+</body>
+</html>
