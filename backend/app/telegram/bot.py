@@ -339,6 +339,12 @@ async def dispatch(update: dict):
             parts = text.split()
             aid = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
             await on_del_alert(chat_id, user_id, aid)
+        elif text.startswith("/buy"):
+            await on_trade(chat_id, user_id, text, 'buy')
+        elif text.startswith("/sell"):
+            await on_trade(chat_id, user_id, text, 'sell')
+        elif text.startswith("/portfolio"):
+            await on_portfolio(chat_id, user_id)
         elif text.startswith("/help"):
             coins_str = " | ".join(c["symbol"] for c in TOP_COINS)
             await send(chat_id,
@@ -351,7 +357,12 @@ async def dispatch(update: dict):
                 "`/alert BTC 100000` — уведомить когда BTC > $100k\n"
                 "`/alert ETH 2000 below` — когда ETH < $2000\n"
                 "`/alerts` — мои активные алерты\n"
-                "`/delalert <id>` — удалить алерт"
+                "`/delalert <id>` — удалить алерт\n\n"
+                "💼 *Портфель:*\n"
+                "`/buy BTC 0.1` — записать покупку по текущей цене\n"
+                "`/buy BTC 0.1 95000` — по конкретной цене\n"
+                "`/sell ETH 1.5` — записать продажу\n"
+                "`/portfolio` — мой портфель и P&L"
             )
         elif text.startswith("/status"):
             await on_status(chat_id)
@@ -511,6 +522,144 @@ async def check_price_alerts(prices: dict):
                 logger.warning(f"Alert send error to {r['user_id']}: {e}")
     except Exception as e:
         logger.error(f"check_price_alerts error: {e}")
+
+
+# ─── PORTFOLIO ────────────────────────────
+async def on_trade(chat_id: int, user_id: int, text: str, action: str):
+    """Handle /buy BTC 0.1 [price] and /sell BTC 0.1 [price]"""
+    parts = text.split()
+    action_ru = "покупку" if action == 'buy' else "продажу"
+    if len(parts) < 3:
+        await send(chat_id,
+            f"⚠️ *Формат:* `/{action} <МОНЕТА> <КОЛ-ВО> [цена]`\n\n"
+            f"Примеры:\n"
+            f"`/{action} BTC 0.1` — по текущей цене\n"
+            f"`/{action} BTC 0.1 95000` — по указанной цене"
+        )
+        return
+    sym = parts[1].upper()
+    if sym not in SYM:
+        await send(chat_id, f"❌ Монета `{sym}` не найдена.\nДоступные: {', '.join(SYM)}")
+        return
+    try:
+        amount = float(parts[2])
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        await send(chat_id, f"❌ Неверное количество. Пример: `/{action} BTC 0.1`")
+        return
+
+    # Get price
+    if len(parts) >= 4:
+        try:
+            price = float(parts[3].replace(',', ''))
+        except ValueError:
+            await send(chat_id, "❌ Неверная цена.")
+            return
+    else:
+        # Fetch current price
+        try:
+            coin = SYM[sym]
+            prices = await get_prices([coin["id"]])
+            price = prices.get(sym, {}).get("current_price", 0)
+            if not price:
+                await send(chat_id, f"❌ Не удалось получить цену {sym}")
+                return
+        except Exception as e:
+            await send(chat_id, f"❌ Ошибка получения цены: {e}")
+            return
+
+    if not sb:
+        await send(chat_id, "❌ База данных недоступна")
+        return
+    try:
+        sb.table("portfolio").insert({
+            "user_id": user_id,
+            "coin_symbol": sym,
+            "action": action,
+            "amount": amount,
+            "price": price,
+        }).execute()
+        total = amount * price
+        action_icon = "🟢" if action == 'buy' else "🔴"
+        await send(chat_id,
+            f"{action_icon} *{action_ru.capitalize()} записана!*\n\n"
+            f"💰 {sym}: {amount} × ${price:,.2f} = *${total:,.2f}*\n\n"
+            f"📊 Портфель: /portfolio"
+        )
+    except Exception as e:
+        logger.error(f"Trade error: {e}")
+        await send(chat_id, f"❌ Ошибка записи: {e}")
+
+
+async def on_portfolio(chat_id: int, user_id: int):
+    """Handle /portfolio — show holdings and P&L."""
+    if not sb:
+        await send(chat_id, "❌ База данных недоступна")
+        return
+    try:
+        rows = sb.table("portfolio").select("*").eq(
+            "user_id", user_id
+        ).order("created_at", desc=True).execute().data
+        if not rows:
+            await send(chat_id,
+                "💼 *Портфель пуст*\n\n"
+                "Добавьте сделку:\n`/buy BTC 0.1`\n`/buy ETH 2 3000`"
+            )
+            return
+
+        # Calculate holdings per coin
+        holdings: dict = {}
+        for r in rows:
+            sym = r["coin_symbol"]
+            if sym not in holdings:
+                holdings[sym] = {"amount": 0.0, "cost": 0.0, "trades": 0}
+            mult = 1 if r["action"] == 'buy' else -1
+            holdings[sym]["amount"] += mult * float(r["amount"])
+            holdings[sym]["cost"]   += mult * float(r["total_usd"] or 0)
+            holdings[sym]["trades"] += 1
+
+        # Remove zero/negative holdings
+        holdings = {k: v for k, v in holdings.items() if v["amount"] > 1e-10}
+
+        if not holdings:
+            await send(chat_id, "💼 Нет открытых позиций (все проданы).")
+            return
+
+        # Fetch current prices
+        ids = [SYM[s]["id"] for s in holdings if s in SYM]
+        prices = await get_prices(ids)
+
+        total_cost   = 0.0
+        total_value  = 0.0
+        lines = ["💼 *Ваш портфель CAIOS*\n"]
+        for sym, h in holdings.items():
+            cur = prices.get(sym, {}).get("current_price", 0)
+            value = h["amount"] * cur
+            pnl   = value - h["cost"]
+            pnl_pct = (pnl / h["cost"] * 100) if h["cost"] else 0
+            pnl_icon = "📈" if pnl >= 0 else "📉"
+            total_cost  += h["cost"]
+            total_value += value
+            lines.append(
+                f"{pnl_icon} *{sym}*: {h['amount']:.6g} ед.\n"
+                f"   Цена: ${cur:,.2f} | Стоимость: ${value:,.2f}\n"
+                f"   P&L: {'+'if pnl>=0 else ''}{pnl:,.2f}$ ({pnl_pct:+.1f}%)"
+            )
+
+        total_pnl = total_value - total_cost
+        total_pct = (total_pnl / total_cost * 100) if total_cost else 0
+        pnl_icon  = "📈" if total_pnl >= 0 else "📉"
+        lines.append(
+            f"\n{'─'*28}\n"
+            f"{pnl_icon} *Итого:* ${total_value:,.2f}\n"
+            f"   Вложено: ${total_cost:,.2f}\n"
+            f"   P&L: {'+'if total_pnl>=0 else ''}{total_pnl:,.2f}$ ({total_pct:+.1f}%)"
+        )
+        await send(chat_id, "\n".join(lines))
+    except Exception as e:
+        logger.error(f"Portfolio error: {e}")
+        await send(chat_id, f"❌ Ошибка: {e}")
 
 
 async def alert_check_loop():
