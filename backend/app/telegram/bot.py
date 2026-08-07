@@ -3,9 +3,13 @@ CAIOS Telegram Bot — МИНИМАЛЬНЫЙ подход.
 Только Bot класс, НИКАКОГО Application/Updater/APScheduler.
 Один getUpdates за раз — 409 невозможен.
 """
-import os, asyncio, logging, json
+import os, asyncio, logging, json, sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from backtester import backtest as run_backtest
 
 import httpx
 from supabase import create_client
@@ -364,15 +368,70 @@ async def dispatch(update: dict):
                 "`/sell ETH 1.5` — записать продажу\n"
                 "`/portfolio` — мой портфель и P&L\n\n"
                 "📊 *Аналитика:*\n"
-                "`/stats` — точность AI Council, win rate, лучшие сигналы"
+                "`/stats` — точность AI Council, win rate, лучшие сигналы\n"
+                "`/backtest BTC 60` — бэктест стратегии на исторических данных"
             )
         elif text.startswith("/stats"):
             await on_stats(chat_id)
+        elif text.startswith("/backtest"):
+            await on_backtest(chat_id, text)
         elif text.startswith("/status"):
             await on_status(chat_id)
 
     except Exception as e:
         logger.error(f"Dispatch error: {e}")
+
+
+# ─── BACKTESTING ───────────────────────
+async def on_backtest(chat_id: int, text: str):
+    """Handle /backtest [COIN] [days]"""
+    parts = text.split()
+    sym  = parts[1].upper() if len(parts) > 1 else "BTC"
+    days = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 60
+    days = max(30, min(365, days))
+
+    await send(chat_id, f"🔬 *Бэктест {sym} — {days} дней...*\n_Анализирую исторические данные, ждите..._")
+    try:
+        r = await run_backtest(sym, days)
+        if "error" in r:
+            await send(chat_id, f"❌ {r['error']}")
+            return
+
+        strat  = r["strategy_return_pct"]
+        bh     = r["buyhold_return_pct"]
+        alpha  = r["alpha"]
+        wr     = r["win_rate_pct"]
+        trades = r["total_trades"]
+        dd     = r["max_drawdown_pct"]
+        sharpe = r["sharpe_ratio"]
+        equity = r["final_equity"]
+
+        s_icon = "🟢" if strat > 0 else "🔴"
+        a_icon = "🟢" if alpha > 0 else "🔴"
+
+        lines = [
+            f"🔬 *Бэктест {sym} — {days} дней*\n",
+            f"{s_icon} Стратегия:      *{strat:+.2f}%*",
+            f"📈 Buy & Hold:   *{bh:+.2f}%*",
+            f"{a_icon} Альфа:         *{alpha:+.2f}%*\n",
+            f"🎯 Win Rate:     *{wr:.1f}%*  ({trades} сделок)",
+            f"📉 Max Drawdown: *{dd:.2f}%*",
+            f"⚡ Sharpe:       *{sharpe}*",
+            f"💵 Итог ($10k): *${equity:,.2f}*",
+        ]
+
+        # Last 3 trades
+        last_trades = r.get("trades", [])[-3:]
+        if last_trades:
+            lines.append("\n📜 *Последние сделки:*")
+            for t in last_trades:
+                icon = "✅" if t["correct"] else "❌"
+                lines.append(f"  {icon} вход ${t['entry']:,.2f} → выход ${t['exit']:,.2f} ({t['pnl_pct']:+.2f}%)")
+
+        await send(chat_id, "\n".join(lines))
+    except Exception as e:
+        logger.error(f"Backtest error: {e}")
+        await send(chat_id, f"❌ Ошибка бэктеста: {e}")
 
 
 # ─── DB SIGNALS ──────────────────────────
