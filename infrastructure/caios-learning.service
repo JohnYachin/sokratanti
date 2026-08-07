@@ -1,0 +1,16 @@
+[Unit]
+Description=CAIOS Learning Engine — Signal Evaluator & Weight Updater
+After=network.target caios-bot.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/caios/backend
+EnvironmentFile=/opt/caios/backend/.env
+ExecStart=/opt/caios/backend/venv/bin/python /opt/caios/backend/learning_engine.py
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=caios-learning
+
+[Install]
+WantedBy=multi-user.target

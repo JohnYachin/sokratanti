@@ -1,0 +1,11 @@
+[Unit]
+Description=CAIOS Learning Engine — Hourly Timer
+Requires=caios-learning.service
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+Unit=caios-learning.service
+
+[Install]
+WantedBy=timers.target
