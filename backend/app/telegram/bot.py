@@ -3,7 +3,7 @@ CAIOS Telegram Bot — МИНИМАЛЬНЫЙ подход.
 Только Bot класс, НИКАКОГО Application/Updater/APScheduler.
 Один getUpdates за раз — 409 невозможен.
 """
-import os, asyncio, logging, json
+import os, asyncio, logging, json, sqlite3, pathlib
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -45,6 +45,44 @@ try:
     sb = create_client(SB_URL, SB_KEY)
 except Exception:
     sb = None
+
+# ─── LOCAL SQLITE DB ─────────────────────
+DB_PATH = pathlib.Path("/opt/caios/data/caios.db")
+
+def init_local_db():
+    """Create local SQLite tables for alerts and portfolio."""
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(DB_PATH)
+    con.executescript("""
+        CREATE TABLE IF NOT EXISTS price_alerts (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id      INTEGER NOT NULL,
+            coin_symbol  TEXT NOT NULL,
+            target_price REAL NOT NULL,
+            direction    TEXT NOT NULL DEFAULT 'above',
+            is_active    INTEGER DEFAULT 1,
+            triggered_at TEXT,
+            created_at   TEXT DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS portfolio (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL,
+            coin_symbol TEXT NOT NULL,
+            action      TEXT NOT NULL,
+            amount      REAL NOT NULL,
+            price       REAL NOT NULL,
+            total_usd   REAL,
+            note        TEXT,
+            created_at  TEXT DEFAULT (datetime('now'))
+        );
+    """)
+    con.commit()
+    con.close()
+    logger.info(f"Local DB ready: {DB_PATH}")
+
+def db():
+    """Open local SQLite connection."""
+    return sqlite3.connect(DB_PATH, check_same_thread=False)
 
 
 # ─── RAW TELEGRAM HTTP ───────────────────
@@ -408,18 +446,13 @@ async def on_alert(chat_id: int, user_id: int, text: str):
         await send(chat_id, "❌ Неверная цена. Пример: `/alert BTC 100000`")
         return
     direction = 'below' if len(parts) > 3 and parts[3].lower() == 'below' else 'above'
-
-    if not sb:
-        await send(chat_id, "❌ База данных недоступна")
-        return
     try:
-        sb.table("price_alerts").insert({
-            "user_id": user_id,
-            "coin_symbol": sym,
-            "target_price": target,
-            "direction": direction,
-            "is_active": True,
-        }).execute()
+        con = db()
+        con.execute(
+            "INSERT INTO price_alerts (user_id, coin_symbol, target_price, direction) VALUES (?,?,?,?)",
+            (user_id, sym, target, direction)
+        )
+        con.commit(); con.close()
         dir_txt = "вырастет выше" if direction == 'above' else "упадёт ниже"
         await send(chat_id,
             f"✅ *Алерт создан!*\n\n"
@@ -429,18 +462,18 @@ async def on_alert(chat_id: int, user_id: int, text: str):
         )
     except Exception as e:
         logger.error(f"Alert create error: {e}")
-        await send(chat_id, f"❌ Ошибка создания алерта: {e}")
+        await send(chat_id, f"❌ Ошибка: {e}")
 
 
 async def on_alerts_list(chat_id: int, user_id: int):
     """Handle /alerts — list active alerts for user."""
-    if not sb:
-        await send(chat_id, "❌ База данных недоступна")
-        return
     try:
-        rows = sb.table("price_alerts").select("*").eq(
-            "user_id", user_id
-        ).eq("is_active", True).order("created_at", desc=True).execute().data
+        con = db()
+        rows = con.execute(
+            "SELECT id, coin_symbol, target_price, direction FROM price_alerts WHERE user_id=? AND is_active=1 ORDER BY id DESC",
+            (user_id,)
+        ).fetchall()
+        con.close()
         if not rows:
             await send(chat_id,
                 "📭 *Нет активных алертов*\n\n"
@@ -448,12 +481,10 @@ async def on_alerts_list(chat_id: int, user_id: int):
             )
             return
         lines = ["🔔 *Ваши активные алерты:*\n"]
-        for r in rows:
-            dir_icon = "📈" if r['direction'] == 'above' else "📉"
-            dir_txt  = "выше" if r['direction'] == 'above' else "ниже"
-            lines.append(
-                f"{dir_icon} `#{r['id']}` *{r['coin_symbol']}* — {dir_txt} *${float(r['target_price']):,.2f}*"
-            )
+        for aid, sym, price, direction in rows:
+            icon = "📈" if direction == 'above' else "📉"
+            dir_txt = "выше" if direction == 'above' else "ниже"
+            lines.append(f"{icon} `#{aid}` *{sym}* — {dir_txt} *${float(price):,.2f}*")
         lines.append("\n_/delalert <id> — удалить_")
         await send(chat_id, "\n".join(lines))
     except Exception as e:
@@ -465,13 +496,10 @@ async def on_del_alert(chat_id: int, user_id: int, alert_id: Optional[int]):
     if alert_id is None:
         await send(chat_id, "⚠️ Укажите ID: `/delalert 5`\nСписок: /alerts")
         return
-    if not sb:
-        await send(chat_id, "❌ База данных недоступна")
-        return
     try:
-        sb.table("price_alerts").update({"is_active": False}).eq(
-            "id", alert_id
-        ).eq("user_id", user_id).execute()
+        con = db()
+        con.execute("UPDATE price_alerts SET is_active=0 WHERE id=? AND user_id=?", (alert_id, user_id))
+        con.commit(); con.close()
         await send(chat_id, f"🗑️ Алерт `#{alert_id}` удалён.")
     except Exception as e:
         await send(chat_id, f"❌ Ошибка: {e}")
@@ -532,8 +560,7 @@ async def on_trade(chat_id: int, user_id: int, text: str, action: str):
     if len(parts) < 3:
         await send(chat_id,
             f"⚠️ *Формат:* `/{action} <МОНЕТА> <КОЛ-ВО> [цена]`\n\n"
-            f"Примеры:\n"
-            f"`/{action} BTC 0.1` — по текущей цене\n"
+            f"Примеры:\n`/{action} BTC 0.1` — по текущей цене\n"
             f"`/{action} BTC 0.1 95000` — по указанной цене"
         )
         return
@@ -543,47 +570,36 @@ async def on_trade(chat_id: int, user_id: int, text: str, action: str):
         return
     try:
         amount = float(parts[2])
-        if amount <= 0:
-            raise ValueError
+        if amount <= 0: raise ValueError
     except ValueError:
-        await send(chat_id, f"❌ Неверное количество. Пример: `/{action} BTC 0.1`")
+        await send(chat_id, f"❌ Неверное количество.")
         return
-
-    # Get price
     if len(parts) >= 4:
-        try:
-            price = float(parts[3].replace(',', ''))
+        try: price = float(parts[3].replace(',', ''))
         except ValueError:
             await send(chat_id, "❌ Неверная цена.")
             return
     else:
-        # Fetch current price
         try:
-            coin = SYM[sym]
-            prices = await get_prices([coin["id"]])
-            price = prices.get(sym, {}).get("current_price", 0)
+            ps = await get_prices([SYM[sym]["id"]])
+            price = ps.get(sym, {}).get("current_price", 0)
             if not price:
                 await send(chat_id, f"❌ Не удалось получить цену {sym}")
                 return
         except Exception as e:
             await send(chat_id, f"❌ Ошибка получения цены: {e}")
             return
-
-    if not sb:
-        await send(chat_id, "❌ База данных недоступна")
-        return
     try:
-        sb.table("portfolio").insert({
-            "user_id": user_id,
-            "coin_symbol": sym,
-            "action": action,
-            "amount": amount,
-            "price": price,
-        }).execute()
         total = amount * price
-        action_icon = "🟢" if action == 'buy' else "🔴"
+        con = db()
+        con.execute(
+            "INSERT INTO portfolio (user_id, coin_symbol, action, amount, price, total_usd) VALUES (?,?,?,?,?,?)",
+            (user_id, sym, action, amount, price, total)
+        )
+        con.commit(); con.close()
+        icon = "🟢" if action == 'buy' else "🔴"
         await send(chat_id,
-            f"{action_icon} *{action_ru.capitalize()} записана!*\n\n"
+            f"{icon} *{action_ru.capitalize()} записана!*\n\n"
             f"💰 {sym}: {amount} × ${price:,.2f} = *${total:,.2f}*\n\n"
             f"📊 Портфель: /portfolio"
         )
@@ -594,65 +610,50 @@ async def on_trade(chat_id: int, user_id: int, text: str, action: str):
 
 async def on_portfolio(chat_id: int, user_id: int):
     """Handle /portfolio — show holdings and P&L."""
-    if not sb:
-        await send(chat_id, "❌ База данных недоступна")
-        return
     try:
-        rows = sb.table("portfolio").select("*").eq(
-            "user_id", user_id
-        ).order("created_at", desc=True).execute().data
+        con = db()
+        rows = con.execute(
+            "SELECT coin_symbol, action, amount, price, total_usd FROM portfolio WHERE user_id=? ORDER BY created_at",
+            (user_id,)
+        ).fetchall()
+        con.close()
         if not rows:
-            await send(chat_id,
-                "💼 *Портфель пуст*\n\n"
-                "Добавьте сделку:\n`/buy BTC 0.1`\n`/buy ETH 2 3000`"
-            )
+            await send(chat_id, "💼 *Портфель пуст*\n\nДобавьте сделку:\n`/buy BTC 0.1`")
             return
-
-        # Calculate holdings per coin
         holdings: dict = {}
-        for r in rows:
-            sym = r["coin_symbol"]
+        for sym, action, amount, price, total in rows:
             if sym not in holdings:
-                holdings[sym] = {"amount": 0.0, "cost": 0.0, "trades": 0}
-            mult = 1 if r["action"] == 'buy' else -1
-            holdings[sym]["amount"] += mult * float(r["amount"])
-            holdings[sym]["cost"]   += mult * float(r["total_usd"] or 0)
-            holdings[sym]["trades"] += 1
-
-        # Remove zero/negative holdings
+                holdings[sym] = {"amount": 0.0, "cost": 0.0}
+            mult = 1 if action == 'buy' else -1
+            holdings[sym]["amount"] += mult * amount
+            holdings[sym]["cost"]   += mult * (total or amount * price)
         holdings = {k: v for k, v in holdings.items() if v["amount"] > 1e-10}
-
         if not holdings:
-            await send(chat_id, "💼 Нет открытых позиций (все проданы).")
+            await send(chat_id, "💼 Нет открытых позиций.")
             return
-
-        # Fetch current prices
         ids = [SYM[s]["id"] for s in holdings if s in SYM]
         prices = await get_prices(ids)
-
-        total_cost   = 0.0
-        total_value  = 0.0
+        total_cost = total_value = 0.0
         lines = ["💼 *Ваш портфель CAIOS*\n"]
         for sym, h in holdings.items():
-            cur = prices.get(sym, {}).get("current_price", 0)
+            cur   = prices.get(sym, {}).get("current_price", 0)
             value = h["amount"] * cur
             pnl   = value - h["cost"]
-            pnl_pct = (pnl / h["cost"] * 100) if h["cost"] else 0
-            pnl_icon = "📈" if pnl >= 0 else "📉"
+            pct   = (pnl / h["cost"] * 100) if h["cost"] else 0
+            icon  = "📈" if pnl >= 0 else "📉"
             total_cost  += h["cost"]
             total_value += value
             lines.append(
-                f"{pnl_icon} *{sym}*: {h['amount']:.6g} ед.\n"
-                f"   Цена: ${cur:,.2f} | Стоимость: ${value:,.2f}\n"
-                f"   P&L: {'+'if pnl>=0 else ''}{pnl:,.2f}$ ({pnl_pct:+.1f}%)"
+                f"{icon} *{sym}*: {h['amount']:.6g} ед.\n"
+                f"   Цена: ${cur:,.2f} | Стоим: ${value:,.2f}\n"
+                f"   P&L: {'+'if pnl>=0 else ''}{pnl:,.2f}$ ({pct:+.1f}%)"
             )
-
         total_pnl = total_value - total_cost
         total_pct = (total_pnl / total_cost * 100) if total_cost else 0
-        pnl_icon  = "📈" if total_pnl >= 0 else "📉"
+        icon = "📈" if total_pnl >= 0 else "📉"
         lines.append(
-            f"\n{'─'*28}\n"
-            f"{pnl_icon} *Итого:* ${total_value:,.2f}\n"
+            f"\n────────────────────────────\n"
+            f"{icon} *Итого:* ${total_value:,.2f}\n"
             f"   Вложено: ${total_cost:,.2f}\n"
             f"   P&L: {'+'if total_pnl>=0 else ''}{total_pnl:,.2f}$ ({total_pct:+.1f}%)"
         )
@@ -787,6 +788,7 @@ async def main():
     logger.info("✅ CAIOS Bot starting (raw HTTP polling — NO Application, NO APScheduler)")
     logger.info(f"   Coins: {', '.join(c['symbol'] for c in TOP_COINS)}")
     logger.info(f"   Subscribers: {subscribers}")
+    init_local_db()
 
     # Run polling, hourly digest and alert checks concurrently
     await asyncio.gather(
