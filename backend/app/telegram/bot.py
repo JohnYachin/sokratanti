@@ -10,6 +10,8 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from backtester import backtest as run_backtest
+from risk_engine import assess as risk_assess
+from backtester import fetch_daily_history, COINGECKO_IDS
 
 import httpx
 from supabase import create_client
@@ -369,12 +371,15 @@ async def dispatch(update: dict):
                 "`/portfolio` — мой портфель и P&L\n\n"
                 "📊 *Аналитика:*\n"
                 "`/stats` — точность AI Council, win rate, лучшие сигналы\n"
-                "`/backtest BTC 60` — бэктест стратегии на исторических данных"
+                "`/backtest BTC 60` — бэктест стратегии на исторических данных\n"
+                "`/risk BTC` — риск-оценка: стоп-лосс, тейк-профит, размер позиции"
             )
         elif text.startswith("/stats"):
             await on_stats(chat_id)
         elif text.startswith("/backtest"):
             await on_backtest(chat_id, text)
+        elif text.startswith("/risk"):
+            await on_risk(chat_id, text)
         elif text.startswith("/status"):
             await on_status(chat_id)
 
@@ -432,6 +437,68 @@ async def on_backtest(chat_id: int, text: str):
     except Exception as e:
         logger.error(f"Backtest error: {e}")
         await send(chat_id, f"❌ Ошибка бэктеста: {e}")
+
+
+async def on_risk(chat_id: int, text: str):
+    """Handle /risk [COIN] [capital] — full risk assessment for current signal."""
+    parts   = text.split()
+    sym     = parts[1].upper() if len(parts) > 1 else "BTC"
+    capital = float(parts[2]) if len(parts) > 2 and parts[2].replace('.','').isdigit() else 10_000.0
+
+    if sym not in COINGECKO_IDS:
+        await send(chat_id, f"❌ Монета `{sym}` не найдена. Доступны: {', '.join(COINGECKO_IDS)}")
+        return
+
+    await send(chat_id, f"⚙️ *Риск-анализ {sym}...*")
+    try:
+        # Fetch history for indicators + ATR
+        cg_id   = COINGECKO_IDS[sym]
+        candles = await fetch_daily_history(cg_id, 60)
+        if len(candles) < 20:
+            await send(chat_id, "❌ Недостаточно исторических данных")
+            return
+
+        closes  = [c["close"]  for c in candles]
+        price   = closes[-1]
+
+        # Get current AI signal from Supabase
+        db_sig = get_db_signals()
+        sig_data = db_sig.get(sym, {})
+        signal     = sig_data.get("signal", "HOLD")
+        confidence = float(sig_data.get("confidence") or 0.5)
+
+        # Compute indicators
+        from app.data.indicators import compute_all
+        ind = compute_all(closes, None, price)
+
+        # Risk assessment
+        r = risk_assess(signal, confidence, price, closes, ind=ind, capital=capital)
+        if "error" in r:
+            await send(chat_id, f"❌ {r['error']}")
+            return
+
+        rs     = r["risk_score"]
+        rs_icon = "🟢" if rs <= 3 else "🟡" if rs <= 6 else "🔴"
+        sig_icon = {"BUY":"🟢","STRONG_BUY":"🟢🟢","SELL":"🔴","STRONG_SELL":"🔴🔴","HOLD":"🟡"}.get(signal,"❓")
+
+        lines = [
+            f"⚠️ *Риск-анализ {sym}*\n",
+            f"{sig_icon} Сигнал AI Council: *{signal}* ({int(confidence*100)}%)",
+            f"💰 Цена: *${price:,.4f}*\n",
+            f"{rs_icon} *Риск-скор: {rs}/10*",
+            f"   {r['recommendation']}\n",
+            f"🛑 Stop-Loss:   *${r['stop_loss']:,.4f}*  (-{r['stop_loss_pct']:.2f}%)",
+            f"🎯 Take-Profit: *${r['take_profit']:,.4f}*  (+{r['take_profit_pct']:.2f}%)",
+            f"⚖️ Risk/Reward: *1 : {r['risk_reward']:.1f}*\n",
+            f"📊 Позиция: *${r['position_usd']:,.2f}*  ({r['position_pct']:.1f}% от ${capital:,.0f})",
+            f"   Количество: *{r['units']:.6g} {sym}*\n",
+            f"📉 Волатильность: {r.get('volatility','N/A')}% (годовая)",
+            f"📏 ATR(14): ${r.get('atr','N/A')}",
+        ]
+        await send(chat_id, "\n".join(lines))
+    except Exception as e:
+        logger.error(f"Risk error: {e}")
+        await send(chat_id, f"❌ Ошибка: {e}")
 
 
 # ─── DB SIGNALS ──────────────────────────
