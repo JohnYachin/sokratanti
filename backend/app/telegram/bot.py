@@ -331,12 +331,27 @@ async def dispatch(update: dict):
         elif text.startswith("/unsubscribe"):
             subscribers.discard(user_id)
             await send(chat_id, "🔕 Отписан от уведомлений.")
+        elif text.startswith("/alert"):
+            await on_alert(chat_id, user_id, text)
+        elif text.startswith("/alerts"):
+            await on_alerts_list(chat_id, user_id)
+        elif text.startswith("/delalert"):
+            parts = text.split()
+            aid = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+            await on_del_alert(chat_id, user_id, aid)
         elif text.startswith("/help"):
             coins_str = " | ".join(c["symbol"] for c in TOP_COINS)
             await send(chat_id,
                 "📖 *CAIOS — Справка*\n\n"
                 f"`/signal <МОНЕТА>` — AI анализ\n  Монеты: `{coins_str}`\n\n"
-                "`/top` — цены топ-10\n`/subscribe` — подписка\n`/status` — статус"
+                "`/top` — цены топ-10\n"
+                "`/subscribe` — подписка\n"
+                "`/status` — статус\n\n"
+                "🔔 *Алерты по цене:*\n"
+                "`/alert BTC 100000` — уведомить когда BTC > $100k\n"
+                "`/alert ETH 2000 below` — когда ETH < $2000\n"
+                "`/alerts` — мои активные алерты\n"
+                "`/delalert <id>` — удалить алерт"
             )
         elif text.startswith("/status"):
             await on_status(chat_id)
@@ -358,6 +373,156 @@ def get_db_signals() -> dict:
     except Exception as e:
         logger.warning(f"DB signals fetch error: {e}")
         return {}
+
+
+# ─── PRICE ALERTS ────────────────────────
+async def on_alert(chat_id: int, user_id: int, text: str):
+    """Handle /alert BTC 100000 [above|below]"""
+    parts = text.split()
+    if len(parts) < 3:
+        await send(chat_id,
+            "⚠️ *Формат:* `/alert <МОНЕТА> <ЦЕНА> [above|below]`\n\n"
+            "Примеры:\n"
+            "`/alert BTC 100000` — уведомить когда BTC > $100k\n"
+            "`/alert ETH 2000 below` — когда ETH упадёт ниже $2000"
+        )
+        return
+    sym = parts[1].upper()
+    if sym not in SYM:
+        await send(chat_id, f"❌ Монета `{sym}` не найдена.\nДоступные: {', '.join(SYM)}")
+        return
+    try:
+        target = float(parts[2].replace(',', ''))
+    except ValueError:
+        await send(chat_id, "❌ Неверная цена. Пример: `/alert BTC 100000`")
+        return
+    direction = 'below' if len(parts) > 3 and parts[3].lower() == 'below' else 'above'
+
+    if not sb:
+        await send(chat_id, "❌ База данных недоступна")
+        return
+    try:
+        sb.table("price_alerts").insert({
+            "user_id": user_id,
+            "coin_symbol": sym,
+            "target_price": target,
+            "direction": direction,
+            "is_active": True,
+        }).execute()
+        dir_txt = "вырастет выше" if direction == 'above' else "упадёт ниже"
+        await send(chat_id,
+            f"✅ *Алерт создан!*\n\n"
+            f"📌 {sym} — когда цена {dir_txt} *${target:,.2f}*\n"
+            f"🔔 Проверка каждые 15 минут.\n\n"
+            f"Список алертов: /alerts"
+        )
+    except Exception as e:
+        logger.error(f"Alert create error: {e}")
+        await send(chat_id, f"❌ Ошибка создания алерта: {e}")
+
+
+async def on_alerts_list(chat_id: int, user_id: int):
+    """Handle /alerts — list active alerts for user."""
+    if not sb:
+        await send(chat_id, "❌ База данных недоступна")
+        return
+    try:
+        rows = sb.table("price_alerts").select("*").eq(
+            "user_id", user_id
+        ).eq("is_active", True).order("created_at", desc=True).execute().data
+        if not rows:
+            await send(chat_id,
+                "📭 *Нет активных алертов*\n\n"
+                "Создайте алерт:\n`/alert BTC 100000`\n`/alert ETH 2000 below`"
+            )
+            return
+        lines = ["🔔 *Ваши активные алерты:*\n"]
+        for r in rows:
+            dir_icon = "📈" if r['direction'] == 'above' else "📉"
+            dir_txt  = "выше" if r['direction'] == 'above' else "ниже"
+            lines.append(
+                f"{dir_icon} `#{r['id']}` *{r['coin_symbol']}* — {dir_txt} *${float(r['target_price']):,.2f}*"
+            )
+        lines.append("\n_/delalert <id> — удалить_")
+        await send(chat_id, "\n".join(lines))
+    except Exception as e:
+        await send(chat_id, f"❌ Ошибка: {e}")
+
+
+async def on_del_alert(chat_id: int, user_id: int, alert_id: Optional[int]):
+    """Handle /delalert <id>"""
+    if alert_id is None:
+        await send(chat_id, "⚠️ Укажите ID: `/delalert 5`\nСписок: /alerts")
+        return
+    if not sb:
+        await send(chat_id, "❌ База данных недоступна")
+        return
+    try:
+        sb.table("price_alerts").update({"is_active": False}).eq(
+            "id", alert_id
+        ).eq("user_id", user_id).execute()
+        await send(chat_id, f"🗑️ Алерт `#{alert_id}` удалён.")
+    except Exception as e:
+        await send(chat_id, f"❌ Ошибка: {e}")
+
+
+async def check_price_alerts(prices: dict):
+    """Check all active alerts and notify users."""
+    if not sb:
+        return
+    try:
+        rows = sb.table("price_alerts").select("*").eq("is_active", True).execute().data
+        if not rows:
+            return
+        triggered = []
+        for r in rows:
+            sym = r["coin_symbol"]
+            p = prices.get(sym, {}).get("current_price", 0)
+            if not p:
+                continue
+            target = float(r["target_price"])
+            hit = (r["direction"] == "above" and p >= target) or \
+                  (r["direction"] == "below"  and p <= target)
+            if hit:
+                triggered.append((r, p, target))
+        if not triggered:
+            return
+        logger.info(f"🔔 {len(triggered)} price alerts triggered!")
+        from datetime import datetime, timezone as tz
+        now = datetime.now(tz.utc).isoformat()
+        for r, cur_price, target in triggered:
+            # Deactivate alert
+            sb.table("price_alerts").update({
+                "is_active": False,
+                "triggered_at": now,
+            }).eq("id", r["id"]).execute()
+            sym = r["coin_symbol"]
+            dir_icon = "📈" if r["direction"] == "above" else "📉"
+            dir_txt  = "вырос выше" if r["direction"] == "above" else "упал ниже"
+            msg = (
+                f"🔔 *CAIOS Алерт сработал!*\n\n"
+                f"{dir_icon} *{sym}* {dir_txt} *${target:,.2f}*\n"
+                f"💰 Текущая цена: *${cur_price:,.2f}*\n\n"
+                f"_Получить AI анализ: /signal {sym}_"
+            )
+            try:
+                await send(int(r["user_id"]), msg)
+            except Exception as e:
+                logger.warning(f"Alert send error to {r['user_id']}: {e}")
+    except Exception as e:
+        logger.error(f"check_price_alerts error: {e}")
+
+
+async def alert_check_loop():
+    """Check price alerts every 15 minutes."""
+    await asyncio.sleep(120)  # initial delay
+    while True:
+        try:
+            prices = await get_prices([c["id"] for c in TOP_COINS])
+            await check_price_alerts(prices)
+        except Exception as e:
+            logger.error(f"Alert loop error: {e}")
+        await asyncio.sleep(900)  # 15 minutes
 
 
 async def run_ai_council_bg():
@@ -474,10 +639,11 @@ async def main():
     logger.info(f"   Coins: {', '.join(c['symbol'] for c in TOP_COINS)}")
     logger.info(f"   Subscribers: {subscribers}")
 
-    # Run polling and hourly digest concurrently
+    # Run polling, hourly digest and alert checks concurrently
     await asyncio.gather(
         polling_loop(),
         hourly_loop(),
+        alert_check_loop(),
     )
 
 
