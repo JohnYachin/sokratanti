@@ -362,8 +362,12 @@ async def dispatch(update: dict):
                 "`/buy BTC 0.1` — записать покупку по текущей цене\n"
                 "`/buy BTC 0.1 95000` — по конкретной цене\n"
                 "`/sell ETH 1.5` — записать продажу\n"
-                "`/portfolio` — мой портфель и P&L"
+                "`/portfolio` — мой портфель и P&L\n\n"
+                "📊 *Аналитика:*\n"
+                "`/stats` — точность AI Council, win rate, лучшие сигналы"
             )
+        elif text.startswith("/stats"):
+            await on_stats(chat_id)
         elif text.startswith("/status"):
             await on_status(chat_id)
 
@@ -384,6 +388,100 @@ def get_db_signals() -> dict:
     except Exception as e:
         logger.warning(f"DB signals fetch error: {e}")
         return {}
+
+
+# ─── PHASE 10: ANALYTICS ─────────────────
+async def on_stats(chat_id: int):
+    """Show AI Council analytics: win rate, signal history."""
+    if not sb:
+        await send(chat_id, "❌ База данных недоступна")
+        return
+    try:
+        # Fetch all signals with coin info
+        rows = sb.table("signals").select(
+            "signal,confidence,score,price_at_signal,created_at,coins(symbol)"
+        ).order("created_at", desc=True).limit(200).execute().data
+
+        if not rows:
+            await send(chat_id, "📊 Нет данных по сигналам. Бот ещё накапливает историю.")
+            return
+
+        # Fetch current prices to evaluate past signals
+        prices = await get_prices([c["id"] for c in TOP_COINS])
+
+        total = buy_sell = correct = 0
+        by_coin: dict = {}
+        sig_counts: dict = {}
+
+        for r in rows:
+            if not r.get("coins"):
+                continue
+            sym     = r["coins"]["symbol"]
+            signal  = r.get("signal", "")
+            entry   = float(r.get("price_at_signal") or 0)
+            cur     = prices.get(sym, {}).get("current_price", 0)
+            conf    = float(r.get("confidence") or 0)
+
+            if sym not in by_coin:
+                by_coin[sym] = {"total": 0, "correct": 0, "pnl": 0.0}
+            if signal not in sig_counts:
+                sig_counts[signal] = 0
+            sig_counts[signal] += 1
+
+            total += 1
+            by_coin[sym]["total"] += 1
+
+            # Evaluate: BUY signal was correct if price went UP
+            if signal in ("BUY", "STRONG_BUY") and entry > 0 and cur > 0:
+                buy_sell += 1
+                pnl_pct = (cur - entry) / entry * 100
+                by_coin[sym]["pnl"] += pnl_pct
+                if cur > entry:
+                    correct += 1
+                    by_coin[sym]["correct"] += 1
+            elif signal in ("SELL", "STRONG_SELL") and entry > 0 and cur > 0:
+                buy_sell += 1
+                pnl_pct = (entry - cur) / entry * 100
+                by_coin[sym]["pnl"] += pnl_pct
+                if cur < entry:
+                    correct += 1
+                    by_coin[sym]["correct"] += 1
+
+        win_rate = (correct / buy_sell * 100) if buy_sell else 0
+        hold_count = sig_counts.get("HOLD", 0)
+        buy_count  = sig_counts.get("BUY", 0) + sig_counts.get("STRONG_BUY", 0)
+        sell_count = sig_counts.get("SELL", 0) + sig_counts.get("STRONG_SELL", 0)
+
+        # Top 3 coins by win rate
+        ranked = sorted(
+            [(s, d) for s, d in by_coin.items() if d["total"] >= 2],
+            key=lambda x: x[1]["correct"] / max(x[1]["total"], 1),
+            reverse=True
+        )[:3]
+
+        wr_icon = "🟢" if win_rate >= 60 else "🟡" if win_rate >= 45 else "🔴"
+        lines = [
+            "📊 *CAIOS — AI Council Аналитика*\n",
+            f"🧠 Анализ {total} сигналов:",
+            f"   🟢 BUY/STRONG\_BUY: {buy_count}",
+            f"   🔴 SELL/STRONG\_SELL: {sell_count}",
+            f"   🟡 HOLD: {hold_count}\n",
+            f"{wr_icon} *Win Rate: {win_rate:.1f}%*  ({correct}/{buy_sell} точных)\n",
+        ]
+
+        if ranked:
+            lines.append("🏆 *Лучшие монеты:*")
+            for sym, d in ranked:
+                wr = d["correct"] / max(d["total"], 1) * 100
+                avg_pnl = d["pnl"] / max(d["total"], 1)
+                pnl_str = f"{'+'if avg_pnl>=0 else ''}{avg_pnl:.1f}%"
+                lines.append(f"   📌 *{sym}* — {wr:.0f}% win ({pnl_str} avg P&L)")
+
+        lines.append(f"\n_Данные по последним {len(rows)} сигналам_")
+        await send(chat_id, "\n".join(lines))
+    except Exception as e:
+        logger.error(f"Stats error: {e}")
+        await send(chat_id, f"❌ Ошибка статистики: {e}")
 
 
 # ─── PRICE ALERTS ────────────────────────
