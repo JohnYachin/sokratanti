@@ -1,13 +1,18 @@
 """
-CAIOS Phase 4 — AI Council Runner
-Запускает 5 GPT-4o агентов для каждой из 10 монет, сохраняет результаты в Supabase.
-Схема: voting_cycles → agent_executions → signals
+CAIOS Phase 3+4 — AI Council Runner with Technical Indicators
+Запускает GPT-4o агентов для каждой из 10 монет с RSI/MACD/BB/EMA.
+Схема: voting_cycles → agent_executions → signals + market_indicators
 """
-import asyncio, json, time, uuid
+import asyncio, json, time, uuid, sys
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
 import httpx
 from supabase import create_client
+
+# Import indicators module
+sys.path.insert(0, str(Path(__file__).parent))
+from app.data.indicators import compute_all, format_for_prompt
 
 SB_URL  = "https://zrvsuwdlhnnfvqxxohex.supabase.co"
 SB_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpydnN1d2RsaG5uZnZxeHhvaGV4Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NTUxMTQwMCwiZXhwIjoyMTAxMDg3NDAwfQ.19YNUSRWeJknVytkfQjvnzsjT0LmvqkWUX0eRRDSGJY"
@@ -47,8 +52,57 @@ async def fetch_prices() -> dict:
     return {d["id"]: d for d in r.json()}
 
 
-async def call_agent(agent: dict, coin_symbol: str, coin_name: str, market: dict) -> dict:
-    """Call one GPT-4o agent with market data. Returns parsed vote dict."""
+async def fetch_ohlcv(coingecko_id: str, days: int = 90) -> dict:
+    """
+    Fetch daily close prices + volumes from CoinGecko market_chart.
+    Returns {closes: [...], volumes: [...]} or empty dict on error.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.get(
+                f"https://api.coingecko.com/api/v3/coins/{coingecko_id}/market_chart",
+                params={"vs_currency": "usd", "days": days, "interval": "daily"}
+            )
+        data = r.json()
+        closes  = [p[1] for p in data.get("prices", [])]
+        volumes = [v[1] for v in data.get("total_volumes", [])]
+        return {"closes": closes, "volumes": volumes}
+    except Exception as e:
+        print(f"   ⚠️  OHLCV fetch error for {coingecko_id}: {e}")
+        return {}
+
+
+async def compute_and_save_indicators(sb, coin_id: str, coingecko_id: str, current_price: float) -> dict:
+    """
+    Fetch historical data, compute indicators, save to market_indicators.
+    Returns indicator dict for use in agent prompts.
+    """
+    ohlcv = await fetch_ohlcv(coingecko_id)
+    if not ohlcv:
+        return {}
+
+    closes  = ohlcv["closes"]
+    volumes = ohlcv["volumes"]
+    ind = compute_all(closes, volumes, current_price)
+    if not ind:
+        return {}
+
+    try:
+        sb.table("market_indicators").insert({
+            "coin_id": coin_id,
+            **{k: float(v) if v is not None else None for k, v in ind.items() if k != "trend_signal"},
+            "trend_signal": ind.get("trend_signal"),
+        }).execute()
+    except Exception as e:
+        # Ignore duplicate date errors
+        if "unique" not in str(e).lower():
+            print(f"   ⚠️  Indicators save error: {e}")
+
+    return ind
+
+
+async def call_agent(agent: dict, coin_symbol: str, coin_name: str, market: dict, indicators: dict = None) -> dict:
+    """Call one GPT-4o agent with market data + technical indicators."""
     start = time.time()
     price  = market.get("current_price", 0)
     ch24   = market.get("price_change_percentage_24h", 0)
@@ -57,19 +111,22 @@ async def call_agent(agent: dict, coin_symbol: str, coin_name: str, market: dict
     hi24   = market.get("high_24h", 0)
     lo24   = market.get("low_24h", 0)
 
+    ind_text = format_for_prompt(indicators, price) if indicators else "Technical indicators: not available"
+
     user_msg = (
         f"Analyze {coin_name} ({coin_symbol}) for a trading signal.\n\n"
-        f"Market data:\n"
-        f"- Current Price: ${price:,.4f}\n"
-        f"- 24h Change: {ch24:+.2f}%\n"
-        f"- 24h High: ${hi24:,.4f}\n"
-        f"- 24h Low: ${lo24:,.4f}\n"
-        f"- 24h Volume: ${vol:,.0f}\n"
-        f"- Market Cap: ${mcap:,.0f}\n\n"
-        f"Your specialization: {agent['specialization']}\n\n"
+        f"📈 Market Data:\n"
+        f"  Current Price: ${price:,.4f}\n"
+        f"  24h Change: {ch24:+.2f}%\n"
+        f"  24h High: ${hi24:,.4f} | Low: ${lo24:,.4f}\n"
+        f"  24h Volume: ${vol:,.0f}\n"
+        f"  Market Cap: ${mcap:,.0f}\n\n"
+        f"{ind_text}\n\n"
+        f"Your specialization: {agent['specialization']}\n"
+        f"Use ALL available data (price action + technical indicators) to form your view.\n\n"
         f'Respond ONLY with valid JSON (no markdown):\n'
         f'{{"signal": "STRONG_BUY"|"BUY"|"HOLD"|"SELL"|"STRONG_SELL", '
-        f'"confidence": 0.0-1.0, "reasoning": "2-3 sentences max"}}'
+        f'"confidence": 0.0-1.0, "reasoning": "2-3 sentences referencing specific indicators"}}'
     )
 
     try:
@@ -147,16 +204,18 @@ def calculate_consensus(votes: list[dict], agents_by_id: dict) -> tuple[str, flo
 
 
 async def run_council_for_coin(sb, agents: list, agents_by_id: dict,
-                                coin_data: dict, market: dict) -> dict:
-    """Run full AI Council cycle for one coin. Returns result summary."""
+                                coin_data: dict, market: dict, indicators: dict = None) -> dict:
+    """Run full AI Council cycle for one coin with technical indicators."""
     coin_id   = coin_data["id"]
     coin_sym  = coin_data["symbol"]
     coin_name = coin_data.get("name", coin_sym)
     price     = market.get("current_price", 0)
     now       = datetime.now(timezone.utc)
 
+    trend = indicators.get("trend_signal", "N/A") if indicators else "N/A"
+    rsi   = indicators.get("rsi_14") if indicators else None
     print(f"\n{'='*50}")
-    print(f"⚙️  Running AI Council for {coin_sym}")
+    print(f"⚙️  Running AI Council for {coin_sym} | ${price:,.2f} | RSI={rsi:.1f if rsi else 'N/A'} | {trend}")
     print(f"{'='*50}")
 
     # 1. Create voting_cycle (status=in_progress)
@@ -174,9 +233,9 @@ async def run_council_for_coin(sb, agents: list, agents_by_id: dict,
         print(f"   ✗ Failed to create cycle: {e}")
         return {"coin": coin_sym, "error": str(e)}
 
-    # 2. Call all agents in parallel
+    # 2. Call all agents in parallel (with indicators)
     print(f"   🤖 Calling {len(agents)} agents in parallel...")
-    tasks = [call_agent(agent, coin_sym, coin_name, market) for agent in agents]
+    tasks = [call_agent(agent, coin_sym, coin_name, market, indicators) for agent in agents]
     votes = await asyncio.gather(*tasks)
     print(f"   ✓ Got {len(votes)} votes")
 
@@ -290,7 +349,7 @@ async def main():
     except Exception as e:
         print(f"⚠️  Deactivate old signals: {e}")
 
-    # Run AI Council for each coin
+    # Run AI Council for each coin (with indicators)
     results = []
     now = datetime.now(timezone.utc)
     print(f"\n🚀 Starting AI Council run — {now.strftime('%d.%m.%Y %H:%M UTC')}")
@@ -302,7 +361,20 @@ async def main():
         if not market or not coin:
             print(f"\n⚠️  Skipping {coin_info['symbol']}: missing data")
             continue
-        result = await run_council_for_coin(sb, agents, agents_by_id, coin, market)
+
+        # Phase 3: Compute technical indicators
+        price = market.get("current_price", 0)
+        print(f"\n📐 Computing indicators for {coin_info['symbol']}...")
+        indicators = await compute_and_save_indicators(sb, coin["id"], cg_id, price)
+        if indicators:
+            trend = indicators.get("trend_signal", "?")
+            rsi   = indicators.get("rsi_14")
+            macd_h = indicators.get("macd_histogram")
+            print(f"   ✓ RSI={rsi:.1f if rsi else 'N/A'} | MACD_hist={macd_h:+.4f if macd_h else 'N/A'} | Trend={trend}")
+        else:
+            print(f"   ⚠️  No indicators (need more history)")
+
+        result = await run_council_for_coin(sb, agents, agents_by_id, coin, market, indicators)
         results.append(result)
 
     # Print summary
