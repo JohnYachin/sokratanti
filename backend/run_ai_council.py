@@ -10,9 +10,10 @@ from pathlib import Path
 import httpx
 from supabase import create_client
 
-# Import indicators module
+# Import indicators + news modules
 sys.path.insert(0, str(Path(__file__).parent))
 from app.data.indicators import compute_all, format_for_prompt
+from app.data.news_fetcher import fetch_news, format_news_for_prompt, calc_news_sentiment
 
 SB_URL  = "https://zrvsuwdlhnnfvqxxohex.supabase.co"
 SB_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpydnN1d2RsaG5uZnZxeHhvaGV4Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NTUxMTQwMCwiZXhwIjoyMTAxMDg3NDAwfQ.19YNUSRWeJknVytkfQjvnzsjT0LmvqkWUX0eRRDSGJY"
@@ -125,8 +126,8 @@ async def compute_and_save_indicators(sb, coin_id: str, coingecko_id: str, curre
 
 
 async def call_agent(agent: dict, coin_symbol: str, coin_name: str, market: dict,
-                     indicators: dict = None, fng: dict = None) -> dict:
-    """Call one GPT-4o agent with market data + technical indicators + Fear & Greed."""
+                     indicators: dict = None, fng: dict = None, news: list = None) -> dict:
+    """Call one GPT-4o agent with market data + indicators + Fear & Greed + news."""
     start = time.time()
     price  = market.get("current_price", 0)
     ch24   = market.get("price_change_percentage_24h", 0)
@@ -135,10 +136,11 @@ async def call_agent(agent: dict, coin_symbol: str, coin_name: str, market: dict
     hi24   = market.get("high_24h", 0)
     lo24   = market.get("low_24h", 0)
 
-    ind_text = format_for_prompt(indicators, price) if indicators else "Technical indicators: not available"
-    fng_val  = fng.get("value", 50) if fng else 50
-    fng_txt  = fng.get("text", "N/A") if fng else "N/A"
-    fng_zone = (
+    ind_text  = format_for_prompt(indicators, price) if indicators else "Technical indicators: not available"
+    news_text = format_news_for_prompt(news, coin_symbol) if news else f"Recent {coin_symbol} news: not available"
+    fng_val   = fng.get("value", 50) if fng else 50
+    fng_txt   = fng.get("text", "N/A") if fng else "N/A"
+    fng_zone  = (
         "Extreme Fear (contrarian BUY opportunity)" if fng_val <= 25 else
         "Fear (cautiously bullish)"                if fng_val <= 45 else
         "Neutral"                                  if fng_val <= 55 else
@@ -156,12 +158,13 @@ async def call_agent(agent: dict, coin_symbol: str, coin_name: str, market: dict
         f"  Market Cap: ${mcap:,.0f}\n\n"
         f"😨 Market Sentiment (Fear & Greed): {fng_txt}\n"
         f"  Interpretation: {fng_zone}\n\n"
+        f"{news_text}\n\n"
         f"{ind_text}\n\n"
         f"Your specialization: {agent['specialization']}\n"
-        f"Use ALL available data (price action + technical indicators + market sentiment) to form your view.\n\n"
+        f"Use ALL data (price + indicators + sentiment + news) to form your view.\n\n"
         f'Respond ONLY with valid JSON (no markdown):\n'
         f'{{"signal": "STRONG_BUY"|"BUY"|"HOLD"|"SELL"|"STRONG_SELL", '
-        f'"confidence": 0.0-1.0, "reasoning": "2-3 sentences referencing specific indicators and sentiment"}}'
+        f'"confidence": 0.0-1.0, "reasoning": "2-3 sentences referencing indicators, sentiment, and news"}}'
     )
 
     try:
@@ -240,7 +243,8 @@ def calculate_consensus(votes: list[dict], agents_by_id: dict) -> tuple[str, flo
 
 async def run_council_for_coin(sb, agents: list, agents_by_id: dict,
                                 coin_data: dict, market: dict,
-                                indicators: dict = None, fng: dict = None) -> dict:
+                                indicators: dict = None, fng: dict = None,
+                                news: list = None) -> dict:
     """Run full AI Council cycle for one coin with technical indicators."""
     coin_id   = coin_data["id"]
     coin_sym  = coin_data["symbol"]
@@ -269,9 +273,9 @@ async def run_council_for_coin(sb, agents: list, agents_by_id: dict,
         print(f"   ✗ Failed to create cycle: {e}")
         return {"coin": coin_sym, "error": str(e)}
 
-    # 2. Call all agents in parallel (with indicators + Fear & Greed)
+    # 2. Call all agents in parallel (with indicators + Fear & Greed + news)
     print(f"   🤖 Calling {len(agents)} agents in parallel...")
-    tasks = [call_agent(agent, coin_sym, coin_name, market, indicators, fng) for agent in agents]
+    tasks = [call_agent(agent, coin_sym, coin_name, market, indicators, fng, news) for agent in agents]
     votes = await asyncio.gather(*tasks)
     print(f"   ✓ Got {len(votes)} votes")
 
@@ -411,7 +415,14 @@ async def main():
         else:
             print(f"   ⚠️  No indicators (need more history)")
 
-        result = await run_council_for_coin(sb, agents, agents_by_id, coin, market, indicators, fng)
+        # Fetch news for this coin
+        print(f"   📰 Fetching {coin_info['symbol']} news...")
+        news = await fetch_news(coin_info["symbol"], limit=5)
+        if news:
+            ns = calc_news_sentiment(news)
+            print(f"   ✓ {len(news)} articles | Sentiment: {ns['label']} (score={ns['score']:+.2f})")
+
+        result = await run_council_for_coin(sb, agents, agents_by_id, coin, market, indicators, fng, news)
         results.append(result)
 
     # Print summary

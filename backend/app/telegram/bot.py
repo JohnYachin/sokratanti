@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from backtester import backtest as run_backtest
 from risk_engine import assess as risk_assess
 from backtester import fetch_daily_history, COINGECKO_IDS
+from app.data.news_fetcher import fetch_news, fetch_market_news, calc_news_sentiment
 
 import httpx
 from supabase import create_client
@@ -372,7 +373,8 @@ async def dispatch(update: dict):
                 "📊 *Аналитика:*\n"
                 "`/stats` — точность AI Council, win rate, лучшие сигналы\n"
                 "`/backtest BTC 60` — бэктест стратегии на исторических данных\n"
-                "`/risk BTC` — риск-оценка: стоп-лосс, тейк-профит, размер позиции"
+                "`/risk BTC` — риск-оценка: стоп-лосс, тейк-профит, размер позиции\n"
+                "`/news BTC` — свежие новости и сентиментанализ"
             )
         elif text.startswith("/stats"):
             await on_stats(chat_id)
@@ -380,6 +382,8 @@ async def dispatch(update: dict):
             await on_backtest(chat_id, text)
         elif text.startswith("/risk"):
             await on_risk(chat_id, text)
+        elif text.startswith("/news"):
+            await on_news(chat_id, text)
         elif text.startswith("/status"):
             await on_status(chat_id)
 
@@ -499,6 +503,39 @@ async def on_risk(chat_id: int, text: str):
     except Exception as e:
         logger.error(f"Risk error: {e}")
         await send(chat_id, f"❌ Ошибка: {e}")
+
+
+async def on_news(chat_id: int, text: str):
+    """Handle /news [COIN] — latest headlines + sentiment analysis."""
+    parts = text.split()
+    sym   = parts[1].upper() if len(parts) > 1 else None
+
+    if sym and sym in COINGECKO_IDS:
+        news = await fetch_news(sym, limit=8)
+        title = f"📰 *Новости {sym}*"
+    else:
+        news = await fetch_market_news(limit=8)
+        title = "📰 *Крипто-рынок — последние новости*"
+
+    if not news:
+        await send(chat_id, "❌ Новости недоступны")
+        return
+
+    ns = calc_news_sentiment(news)
+    lines = [
+        title,
+        f"Сентимент: *{ns['label']}*  "
+        f"🟢{ns['bull_count']} / ⬜{ns['neutral_count']} / 🔴{ns['bear_count']}\n"
+    ]
+    for n in news[:6]:
+        s = n["sentiment_score"]
+        icon = "🟢" if s > 0.1 else "🔴" if s < -0.1 else "⬜"
+        source = n["source"][:12]
+        lines.append(f"{icon} [{n['published_at']} · {source}]")
+        lines.append(f"   {n['title'][:90]}")
+        lines.append("")
+
+    await send(chat_id, "\n".join(lines))
 
 
 # ─── DB SIGNALS ──────────────────────────
