@@ -52,6 +52,29 @@ async def fetch_prices() -> dict:
     return {d["id"]: d for d in r.json()}
 
 
+async def fetch_fear_greed() -> dict:
+    """Fetch Fear & Greed Index from alternative.me. Returns {value, label, text}."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get("https://api.alternative.me/fng/?limit=2")
+        data = r.json()["data"]
+        today     = data[0]
+        yesterday = data[1] if len(data) > 1 else data[0]
+        val   = int(today["value"])
+        label = today["value_classification"]
+        prev  = int(yesterday["value"])
+        trend = "improving" if val > prev else "worsening" if val < prev else "stable"
+        return {
+            "value":  val,
+            "label":  label,
+            "trend":  trend,
+            "text":   f"{val}/100 ({label}) — {trend} vs yesterday ({prev})",
+        }
+    except Exception as e:
+        print(f"   ⚠️  Fear & Greed fetch error: {e}")
+        return {"value": 50, "label": "Neutral", "trend": "stable", "text": "N/A"}
+
+
 async def fetch_ohlcv(coingecko_id: str, days: int = 90) -> dict:
     """
     Fetch daily close prices + volumes from CoinGecko market_chart.
@@ -101,8 +124,9 @@ async def compute_and_save_indicators(sb, coin_id: str, coingecko_id: str, curre
     return ind
 
 
-async def call_agent(agent: dict, coin_symbol: str, coin_name: str, market: dict, indicators: dict = None) -> dict:
-    """Call one GPT-4o agent with market data + technical indicators."""
+async def call_agent(agent: dict, coin_symbol: str, coin_name: str, market: dict,
+                     indicators: dict = None, fng: dict = None) -> dict:
+    """Call one GPT-4o agent with market data + technical indicators + Fear & Greed."""
     start = time.time()
     price  = market.get("current_price", 0)
     ch24   = market.get("price_change_percentage_24h", 0)
@@ -112,6 +136,15 @@ async def call_agent(agent: dict, coin_symbol: str, coin_name: str, market: dict
     lo24   = market.get("low_24h", 0)
 
     ind_text = format_for_prompt(indicators, price) if indicators else "Technical indicators: not available"
+    fng_val  = fng.get("value", 50) if fng else 50
+    fng_txt  = fng.get("text", "N/A") if fng else "N/A"
+    fng_zone = (
+        "Extreme Fear (contrarian BUY opportunity)" if fng_val <= 25 else
+        "Fear (cautiously bullish)"                if fng_val <= 45 else
+        "Neutral"                                  if fng_val <= 55 else
+        "Greed (caution — market may be overheated)" if fng_val <= 75 else
+        "Extreme Greed (contrarian SELL signal)"
+    )
 
     user_msg = (
         f"Analyze {coin_name} ({coin_symbol}) for a trading signal.\n\n"
@@ -121,12 +154,14 @@ async def call_agent(agent: dict, coin_symbol: str, coin_name: str, market: dict
         f"  24h High: ${hi24:,.4f} | Low: ${lo24:,.4f}\n"
         f"  24h Volume: ${vol:,.0f}\n"
         f"  Market Cap: ${mcap:,.0f}\n\n"
+        f"😨 Market Sentiment (Fear & Greed): {fng_txt}\n"
+        f"  Interpretation: {fng_zone}\n\n"
         f"{ind_text}\n\n"
         f"Your specialization: {agent['specialization']}\n"
-        f"Use ALL available data (price action + technical indicators) to form your view.\n\n"
+        f"Use ALL available data (price action + technical indicators + market sentiment) to form your view.\n\n"
         f'Respond ONLY with valid JSON (no markdown):\n'
         f'{{"signal": "STRONG_BUY"|"BUY"|"HOLD"|"SELL"|"STRONG_SELL", '
-        f'"confidence": 0.0-1.0, "reasoning": "2-3 sentences referencing specific indicators"}}'
+        f'"confidence": 0.0-1.0, "reasoning": "2-3 sentences referencing specific indicators and sentiment"}}'
     )
 
     try:
@@ -204,7 +239,8 @@ def calculate_consensus(votes: list[dict], agents_by_id: dict) -> tuple[str, flo
 
 
 async def run_council_for_coin(sb, agents: list, agents_by_id: dict,
-                                coin_data: dict, market: dict, indicators: dict = None) -> dict:
+                                coin_data: dict, market: dict,
+                                indicators: dict = None, fng: dict = None) -> dict:
     """Run full AI Council cycle for one coin with technical indicators."""
     coin_id   = coin_data["id"]
     coin_sym  = coin_data["symbol"]
@@ -233,9 +269,9 @@ async def run_council_for_coin(sb, agents: list, agents_by_id: dict,
         print(f"   ✗ Failed to create cycle: {e}")
         return {"coin": coin_sym, "error": str(e)}
 
-    # 2. Call all agents in parallel (with indicators)
+    # 2. Call all agents in parallel (with indicators + Fear & Greed)
     print(f"   🤖 Calling {len(agents)} agents in parallel...")
-    tasks = [call_agent(agent, coin_sym, coin_name, market, indicators) for agent in agents]
+    tasks = [call_agent(agent, coin_sym, coin_name, market, indicators, fng) for agent in agents]
     votes = await asyncio.gather(*tasks)
     print(f"   ✓ Got {len(votes)} votes")
 
@@ -337,10 +373,11 @@ async def main():
     coins_by_cgid = {c["coingecko_id"]: c for c in coins}
     print(f"✅ Loaded {len(coins)} target coins")
 
-    # Fetch current prices
-    print("\n📊 Fetching prices from CoinGecko...")
-    markets = await fetch_prices()
-    print(f"✅ Got prices for {len(markets)} coins")
+    # Fetch current prices + Fear & Greed Index
+    print("\n📊 Fetching market data...")
+    markets, fng = await asyncio.gather(fetch_prices(), fetch_fear_greed())
+    fng_icon = "😨" if fng["value"] <= 30 else "🤦" if fng["value"] >= 70 else "😐"
+    print(f"✅ Prices: {len(markets)} coins | {fng_icon} Fear & Greed: {fng['text']}")
 
     # Deactivate old signals
     try:
@@ -374,7 +411,7 @@ async def main():
         else:
             print(f"   ⚠️  No indicators (need more history)")
 
-        result = await run_council_for_coin(sb, agents, agents_by_id, coin, market, indicators)
+        result = await run_council_for_coin(sb, agents, agents_by_id, coin, market, indicators, fng)
         results.append(result)
 
     # Print summary

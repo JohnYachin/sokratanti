@@ -1,0 +1,41 @@
+name: CAIOS — Deploy to VPS
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Deploy to Hostinger VPS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          script: |
+            set -e
+            cd /opt/caios
+
+            echo "📥 Pulling latest code..."
+            git pull origin main
+
+            echo "📦 Installing new dependencies..."
+            source backend/venv/bin/activate
+            pip install -r backend/requirements.txt -q
+
+            echo "🔄 Restarting services..."
+            systemctl restart caios-bot
+            systemctl restart caios-learning.timer
+
+            echo "✅ Health check..."
+            sleep 4
+            systemctl is-active caios-bot || (journalctl -u caios-bot -n 10 --no-pager && exit 1)
+
+            echo "🚀 Deployment complete!"
