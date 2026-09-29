@@ -27,29 +27,21 @@ from db.database import save_signal, get_history
 logger = logging.getLogger(__name__)
 
 # ── Монеты по умолчанию ──────────────────────────────────────────────────────
+# Монеты с Binance USDT-M Futures — синхронизировано с scheduler.py
 TRACKED_COINS = [
-    # Топ-10
     "btc", "eth", "bnb", "sol", "xrp",
     "doge", "ada", "avax", "link", "dot",
-    # Топ 11-20
-    "near", "ltc", "uni", "shib", "trx",
-    "bch", "atom", "xlm", "etc", "fil",
-    # Топ 21-30
-    "arb", "sui", "pepe", "apt", "hbar",
-    "icp", "vet", "mkr", "aave", "op",
+    "ltc", "atom", "near", "uni", "trx",
+    "bch", "aave", "apt", "arb", "op",
 ]
 COIN_NAMES = {
-    "btc":  "Bitcoin",           "eth":  "Ethereum",        "bnb":  "BNB",
-    "sol":  "Solana",            "xrp":  "Ripple",          "doge": "Dogecoin",
-    "ada":  "Cardano",           "avax": "Avalanche",       "link": "Chainlink",
-    "dot":  "Polkadot",          "near": "NEAR Protocol",   "ltc":  "Litecoin",
-    "uni":  "Uniswap",           "shib": "Shiba Inu",       "trx":  "TRON",
-    "bch":  "Bitcoin Cash",      "atom": "Cosmos",          "xlm":  "Stellar",
-    "etc":  "Ethereum Classic",  "fil":  "Filecoin",
-    "arb":  "Arbitrum",          "sui":  "Sui",             "pepe": "Pepe",
-    "apt":  "Aptos",             "hbar": "Hedera",          "icp":  "Internet Computer",
-    "vet":  "VeChain",           "mkr":  "Maker",           "aave": "Aave",
-    "op":   "Optimism",
+    "btc":  "Bitcoin",      "eth":  "Ethereum",    "bnb":  "BNB",
+    "sol":  "Solana",       "xrp":  "Ripple",       "doge": "Dogecoin",
+    "ada":  "Cardano",      "avax": "Avalanche",    "link": "Chainlink",
+    "dot":  "Polkadot",     "ltc":  "Litecoin",     "atom": "Cosmos",
+    "near": "NEAR",        "uni":  "Uniswap",      "trx":  "TRON",
+    "bch":  "Bitcoin Cash", "aave": "Aave",         "apt":  "Aptos",
+    "arb":  "Arbitrum",     "op":   "Optimism",
 }
 
 
@@ -81,19 +73,23 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📋 <b>Команды:</b>\n"
         "/price <code>BTC</code> — текущая цена\n"
         "/signal <code>BTC</code> — торговый сигнал + точка входа + SL + TP1 + TP2\n"
-        "/scan — анализ всех 30 монет (LONG/SHORT + торговые планы)\n"
+        "/futures <code>BTC</code> — Futures: Mark Price, Funding Rate, OI\n"
+        "/signal <code>BTC</code> — сигнал + вход + SL + TP1 + TP2 + плечо\n"
+        "/scan — все 20 монет (LONG/SHORT + торговые планы)\n"
+        "/price <code>BTC</code> — цена (Futures + Spot)\n"
         "/sentiment <code>BTC</code> — настроение рынка (AI)\n"
         "/analyze <code>BTC</code> — анализ от Perplexity\n"
         "/news <code>BTC</code> — свежие новости\n"
         "/feargreed — индекс страха и жадности\n"
         "/history — история последних сигналов\n"
-        "/coins — все 30 отслеживаемых монет\n\n"
+        "/results — статистика сделок (win/loss)\n"
+        "/coins — все 20 монет\n\n"
         "📦 <b>Портфель:</b>\n"
         "/portfolio — мои позиции + P&L + сигналы\n"
         "/add <code>BTC 0.1 63500</code> — добавить позицию\n"
         "/remove <code>BTC</code> — удалить позицию\n\n"
-        "⏰ <b>Авто-алерты каждый час</b> по 30 монетам\n"
-        "🚨 Сигнал при BUY\_ZONE / STRONG\_SETUP / EVENT\_RISK"
+        "⏰ <b>Авто-алерты каждые 30 мин</b> по 20 монетам\n"
+        "🚨 LONG/SHORT сетап → Mark Price + Funding + плечо"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
@@ -116,24 +112,132 @@ async def cmd_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⏳ Получаю данные по <b>{coin.upper()}</b>...", parse_mode=ParseMode.HTML
     )
     try:
-        # asyncio.to_thread: requests.get не блокирует event loop
+        # Futures Mark Price — основной курс
+        futures_line = ""
+        try:
+            from market_data.binance_futures import get_futures_ticker
+            ft  = await asyncio.to_thread(get_futures_ticker, coin)
+            mk  = ft["mark_price"]
+            lp  = ft["last_price"]
+            fch = ft["price_change_pct"]
+            fr  = ft["last_funding_rate_pct"]
+            fr_icon = "🔴" if fr > 0.05 else ("🟢" if fr < -0.02 else "⚪")
+            futures_line = (
+                f"📈 <b>Binance Futures:</b>\n"
+                f"  Mark Price: <code>${mk:,.4f}</code>\n"
+                f"  Last Price: <code>${lp:,.4f}</code>\n"
+                f"  24ч изм: <code>{fch:+.2f}%</code>\n"
+                f"  {fr_icon} Funding Rate: <code>{fr:+.4f}%</code>\n\n"
+            )
+        except Exception:
+            pass
+
+        # Spot данные (market cap, volume)
         data = await asyncio.to_thread(get_price, coin)
         ch  = data["change_24h"]
         ch7 = data["change_7d"]
+        ch_icon  = "📈" if ch  >= 0 else "📉"
+        ch7_icon = "📈" if ch7 >= 0 else "📉"
         text = (
             f"💰 <b>{data['name']} ({data['symbol']})</b>\n\n"
-            f"Цена:       <code>${data['price_usd']:>15,.2f}</code>\n"
-            f"{'📈' if ch >= 0 else '📉'} 24ч:       <code>{ch:>+14.2f}%</code>\n"
-            f"{'📈' if ch7 >= 0 else '📉'} 7д:        <code>{ch7:>+14.2f}%</code>\n"
-            f"⬆️ Макс 24ч: <code>${data['high_24h']:>14,.2f}</code>\n"
-            f"⬇️ Мин 24ч:  <code>${data['low_24h']:>14,.2f}</code>\n"
-            f"💎 Капитал:  <code>${data['market_cap']:>14,.0f}</code>\n"
-            f"📦 Объём:    <code>${data['volume_24h']:>14,.0f}</code>"
+            f"{futures_line}"
+            f"📉 <b>Spot (CoinGecko):</b>\n"
+            f"  Цена:      <code>${data['price_usd']:,.4f}</code>\n"
+            f"  {ch_icon} 24ч:    <code>{ch:+.2f}%</code>\n"
+            f"  {ch7_icon} 7д:     <code>{ch7:+.2f}%</code>\n"
+            f"  ⬆️ Макс 24ч: <code>${data['high_24h']:,.4f}</code>\n"
+            f"  ⬇️ Мин 24ч:  <code>${data['low_24h']:,.4f}</code>\n"
+            f"  💸 Капитал:  <code>${data['market_cap']:,.0f}</code>\n"
+            f"  📦 Объём:    <code>${data['volume_24h']:,.0f}</code>"
         )
         await msg.edit_text(text, parse_mode=ParseMode.HTML)
     except Exception as e:
         logger.error("price error: %s", e)
         await msg.edit_text(f"❌ Ошибка: <code>{e}</code>", parse_mode=ParseMode.HTML)
+
+
+# ── /futures ───────────────────────────────────────────────────────────────────────────
+@auth_required
+async def cmd_futures(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /futures BTC — полные данные по Binance Futures:
+    Mark Price, Last Price, Funding Rate, Open Interest,
+    следующее время фандинга, интерпретация.
+    """
+    coin = (context.args[0] if context.args else "btc").lower()
+    msg  = await update.message.reply_text(
+        f"⏳ Загружаю Futures данные по <b>{coin.upper()}</b>...", parse_mode=ParseMode.HTML
+    )
+    try:
+        from market_data.binance_futures import (
+            get_futures_ticker, get_funding_rate, get_open_interest, get_futures_context
+        )
+        from analysis.trading_rules import interpret_funding_rate
+
+        ticker, funding, oi, ctx = await asyncio.gather(
+            asyncio.to_thread(get_futures_ticker, coin),
+            asyncio.to_thread(get_funding_rate, coin),
+            asyncio.to_thread(get_open_interest, coin),
+            asyncio.to_thread(get_futures_context, coin),
+        )
+
+        mk  = ticker["mark_price"]
+        lp  = ticker["last_price"]
+        ch  = ticker["price_change_pct"]
+        h24 = ticker["high_24h"]
+        l24 = ticker["low_24h"]
+        vol = ticker["volume_24h"]
+
+        fr_cur = funding["current_rate_pct"]
+        fr_nxt = funding["predicted_rate_pct"]
+        next_t = funding.get("next_funding_time", "")
+        fr_sig, fr_adj, fr_desc = interpret_funding_rate(fr_cur)
+
+        oi_val = oi.get("open_interest_usd", 0)
+        oi_str = f"${oi_val/1e9:.2f}B" if oi_val >= 1e9 else f"${oi_val/1e6:.1f}M"
+
+        fr_icon = "🔴" if fr_cur > 0.05 else ("🟢" if fr_cur < -0.02 else "⚪")
+        ch_icon = "📈" if ch >= 0 else "📉"
+
+        # Интерпретация Funding Rate
+        fr_interp = (
+            "🔴 Лонги перегреты — риск коррекции вниз" if fr_cur > 0.05
+            else "🟢 Шорты перегреты — возможен шорт-сквиз" if fr_cur < -0.02
+            else "⚪ Фандинг нейтральный — нет перекоса"
+        )
+
+        # Заметки из Futures контекста
+        ctx_notes = ctx.get("notes", [])
+        notes_str = ("\n" + "\n".join(f"  • {n}" for n in ctx_notes)) if ctx_notes else ""
+
+        text = (
+            f"📊 <b>Binance Futures: {coin.upper()}USDT</b>\n\n"
+
+            f"🎯 <b>Mark Price:</b>  <code>${mk:,.4f}</code>  "
+            f"({ch_icon}{ch:+.2f}%)\n"
+            f"🔄 <b>Last Price:</b>  <code>${lp:,.4f}</code>\n"
+            f"⬆️ <b>Макс 24ч:</b>  <code>${h24:,.4f}</code>\n"
+            f"⬇️ <b>Мин 24ч:</b>   <code>${l24:,.4f}</code>\n"
+            f"📦 <b>Объём 24ч:</b>  <code>${vol:,.0f}</code>\n\n"
+
+            f"💰 <b>Funding Rate:</b>\n"
+            f"  {fr_icon} Текущий:    <code>{fr_cur:+.4f}%</code>\n"
+            f"  🔮 Прогноз:     <code>{fr_nxt:+.4f}%</code>\n"
+            f"  ⏰ Следующий:  <code>{next_t or '—'}</code>\n"
+            f"  {fr_interp}\n\n"
+
+            f"📊 <b>Open Interest:</b> <code>{oi_str}</code>\n\n"
+
+            f"🧠 <b>Интерпретация:</b>{notes_str if notes_str else ' нейтральная картина'}\n\n"
+
+            f"<i>Данные: fapi.binance.com — те же что в Binance Futures</i>"
+        )
+        await msg.edit_text(text, parse_mode=ParseMode.HTML)
+
+    except Exception as e:
+        logger.error("futures cmd error: %s", e)
+        await msg.edit_text(f"❌ Ошибка: <code>{e}</code>", parse_mode=ParseMode.HTML)
+
 
 
 # ── /signal ───────────────────────────────────────────────────────────────────
@@ -204,40 +308,65 @@ async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         timing_str = timing_icons.get(timing, "🔘")
 
         # ── Торговый план ─────────────────────────────────────────────────────
+        direction  = result.get("direction", "LONG")
+        plan       = result.get("trading_plan") if direction != "SHORT" else result.get("short_plan")
         plan_block = ""
         lev_block  = ""
         if plan and plan.setup_valid:
             entry_mid = (plan.entry_low + plan.entry_high) / 2
-            # Атрибуты могут называться target_1 или target1
-            t1 = getattr(plan, "target_1", None) or getattr(plan, "target1", None)
-            t2 = getattr(plan, "target_2", None) or getattr(plan, "target2", None)
-
+            t1 = plan.target_1
+            t2 = plan.target_2
             rr_str = f"1:{plan.risk_reward:.1f}" if plan.risk_reward else "—"
+            dir_label = "📥 Шорт:" if direction == "SHORT" else "📥 Вход:"
+            stop_label = "🛑 Стоп (выше):" if direction == "SHORT" else "🛑 Стоп:"
 
             plan_block = (
-                f"\n💰 <b>ТОРГОВЫЙ ПЛАН:</b>\n"
-                f"  📥 Вход:    <code>{fp(plan.entry_low)} — {fp(plan.entry_high)}</code>\n"
-                f"  🛑 Стоп:    <code>{fp(plan.stop_loss)}</code>  "
+                f"\n💰 <b>ТОРГОВЫЙ ПЛАН ({direction}):</b>\n"
+                f"  {dir_label}  <code>{fp(plan.entry_low)} — {fp(plan.entry_high)}</code>\n"
+                f"  {stop_label} <code>{fp(plan.stop_loss)}</code>  "
                 f"(<code>-{plan.risk_pct:.1f}%</code>)\n"
                 f"  🎯 Цель 1:  <code>{fp(t1)}</code>  (R/R {rr_str})\n"
             )
             if t2:
                 plan_block += f"  🎯 Цель 2:  <code>{fp(t2)}</code>\n"
             if getattr(plan, "chase_limit", None):
-                plan_block += f"  ⛔ Не входить выше: <code>{fp(plan.chase_limit)}</code>\n"
+                plan_block += f"  ⛔ Не входить {'ниже' if direction=='SHORT' else 'выше'}: <code>{fp(plan.chase_limit)}</code>\n"
 
-            # Плечо
+            # Плечо — теперь с фандингом, ATR и ценой ликвидации
             try:
-                from analysis.leverage import recommend_leverage
-                lev_data = recommend_leverage(setup_score, entry_mid, plan.stop_loss, t1 or entry_mid*1.05, t2)
-                lev = lev_data["leverage"]
+                from analysis.leverage import recommend_leverage, calc_liquidation_price
+                futures_ctx = result.get("futures_ctx", {})
+                funding_pct = futures_ctx.get("funding_rate_pct", 0.0)
+                # Fallback: из futures_ticker если есть
+                if not funding_pct and futures_ticker:
+                    funding_pct = futures_ticker.get("last_funding_rate_pct", 0.0)
+
+                atr     = ind.get("atr")
+                atr_pct = (atr / entry_mid) if (atr and entry_mid) else None
+
+                lev_data = recommend_leverage(
+                    setup_score, entry_mid, plan.stop_loss,
+                    t1 or entry_mid * 1.05, t2,
+                    funding_rate_pct=funding_pct,
+                    atr_pct=atr_pct,
+                    direction=direction,
+                )
+                lev      = lev_data["leverage"]
                 lev_icon = "🟢" if lev <= 2 else ("🟡" if lev <= 3 else "🔴")
+                liq      = lev_data["liquidation_price"]
+                liq_safe = lev_data["liq_safe"]
+                liq_warn = "" if liq_safe else "  ⚠️ <b>ПРОВЕРЬ СТОП: близко к ликвидации!</b>\n"
+
                 lev_block = (
                     f"\n{lev_icon} <b>ПЛЕЧО: {lev}x</b>  |  {lev_data['confidence']}\n"
-                    f"  Риск со стопом:  <code>-{lev_data['risk_lev_pct']:.1f}%</code>\n"
-                    f"  Доход T1:        <code>+{lev_data['reward1_lev']:.1f}%</code>\n"
-                    f"  Маржа (2% риск): ~<code>{lev_data['margin_pct']:.0f}%</code> депо\n"
+                    f"  Риск со стопом:   <code>-{lev_data['risk_lev_pct']:.1f}%</code>\n"
+                    f"  Доход T1 ×{lev}:  <code>+{lev_data['reward1_lev']:.1f}%</code>\n"
+                    f"  💀 Ликвидация:    <code>{fp(liq)}</code>\n"
+                    f"{liq_warn}"
+                    f"  Маржа (2% риск):  ~<code>{lev_data['margin_pct']:.0f}%</code> депо\n"
                 )
+                if lev_data.get("funding_note"):
+                    lev_block += f"  {lev_data['funding_note']}\n"
             except Exception:
                 lev_block = ""
         else:
@@ -771,3 +900,159 @@ async def cmd_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = header + "\n".join(rows)
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
+
+# ── /account ──────────────────────────────────────────────────────────────────
+@auth_required
+async def cmd_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/account — Баланс и открытые позиции Binance Futures."""
+    msg = await update.message.reply_text(
+        "⏳ Загружаю данные аккаунта из Binance...", parse_mode=ParseMode.HTML
+    )
+    try:
+        from market_data.binance_account import get_balance, get_open_positions, check_api_connection
+
+        ok, conn_msg = await asyncio.to_thread(check_api_connection)
+        if not ok:
+            await msg.edit_text(
+                f"{conn_msg}\n\n"
+                "Добавь в <code>.env</code> на VPS:\n"
+                "<code>BINANCE_API_KEY=твой_ключ</code>\n"
+                "<code>BINANCE_API_SECRET=твой_секрет</code>",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+        balance, positions = await asyncio.gather(
+            asyncio.to_thread(get_balance),
+            asyncio.to_thread(get_open_positions),
+        )
+
+        upnl = balance["unrealized_pnl"]
+        upnl_icon = "📈" if upnl >= 0 else "📉"
+        upnl_sign = "+" if upnl >= 0 else ""
+
+        text = (
+            f"💼 <b>Binance Futures Account</b>\n\n"
+            f"💰 Баланс:         <code>${balance['wallet']:,.2f}</code> USDT\n"
+            f"✅ Доступно:        <code>${balance['available']:,.2f}</code> USDT\n"
+            f"{upnl_icon} Незакрытый P&L:  <code>{upnl_sign}${upnl:,.2f}</code>\n\n"
+        )
+
+        if not positions:
+            text += "📭 <i>Открытых позиций нет</i>"
+        else:
+            text += f"📊 <b>Открытые позиции ({len(positions)}):</b>\n"
+            for p in positions:
+                side_icon = "🟢" if p["side"] == "LONG" else "🔴"
+                pnl       = p["unrealized_pnl"]
+                pnl_sign  = "+" if pnl >= 0 else ""
+                pnl_icon  = "📈" if pnl >= 0 else "📉"
+
+                def _fp(v):
+                    return f"${v:,.2f}" if v >= 1 else f"${v:.4f}"
+
+                text += (
+                    f"\n{side_icon} <b>{p['coin'].upper()}</b> ×{p['leverage']} ({p['side']})\n"
+                    f"  Вход: <code>{_fp(p['entry_price'])}</code>  Mark: <code>{_fp(p['mark_price'])}</code>\n"
+                    f"  P&L:  {pnl_icon} <code>{pnl_sign}${pnl:,.2f}</code> (<code>{pnl_sign}{p['pnl_pct']:.1f}%</code>)\n"
+                    f"  Маржа: <code>${p['margin']:,.2f}</code>  💀 Liq: <code>{_fp(p['liq_price'])}</code>\n"
+                )
+
+        await msg.edit_text(text, parse_mode=ParseMode.HTML)
+
+    except Exception as e:
+        logger.error("cmd_account error: %s", e)
+        await msg.edit_text(
+            f"❌ Ошибка: <code>{e}</code>\n\n"
+            "Проверь BINANCE_API_KEY и BINANCE_API_SECRET в .env на VPS.",
+            parse_mode=ParseMode.HTML,
+        )
+
+
+# ── /myhistory ────────────────────────────────────────────────────────────────
+@auth_required
+async def cmd_myhistory(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/myhistory [дней] — Анализ личной истории сделок Binance Futures."""
+    try:
+        days = int(context.args[0]) if context.args else 90
+        days = max(7, min(180, days))
+    except (ValueError, IndexError):
+        days = 90
+
+    msg = await update.message.reply_text(
+        f"⏳ Анализирую твои сделки за {days} дней...",
+        parse_mode=ParseMode.HTML,
+    )
+    try:
+        from analysis.trade_analyzer import analyze_my_trades
+        analysis = await asyncio.to_thread(analyze_my_trades, days)
+
+        if "error" in analysis:
+            await msg.edit_text(
+                f"⚠️ {analysis['error']}\n\nПроверь BINANCE_API_KEY на VPS.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+        total     = analysis["total_trades"]
+        total_pnl = analysis["total_pnl"]
+        wr        = analysis["win_rate"]
+        pnl_icon  = "📈" if total_pnl >= 0 else "📉"
+        pnl_sign  = "+" if total_pnl >= 0 else ""
+
+        text = (
+            f"🧠 <b>Анализ твоих сделок — {days} дней</b>\n\n"
+            f"📊 Всего сделок: <b>{total}</b>\n"
+            f"🎯 Win rate:     <b>{wr*100:.0f}%</b>\n"
+            f"{pnl_icon} Итоговый P&L: <code>{pnl_sign}${total_pnl:,.2f}</code>\n\n"
+        )
+
+        by_coin = analysis.get("by_coin", {})
+        if by_coin:
+            sorted_coins = sorted(by_coin.values(), key=lambda x: x.total_pnl, reverse=True)
+            profitable   = [s for s in sorted_coins if s.total_pnl > 0][:5]
+            losers       = [s for s in sorted_coins if s.total_pnl < 0][:3]
+
+            if profitable:
+                text += "🏆 <b>Прибыльные монеты:</b>\n"
+                for s in profitable:
+                    sign = "+" if s.total_pnl >= 0 else ""
+                    text += (
+                        f"  <b>{s.coin.upper()}</b>  Win {s.win_rate*100:.0f}%  "
+                        f"({s.wins}W/{s.losses}L)  <code>{sign}${s.total_pnl:.0f}</code>\n"
+                    )
+                text += "\n"
+
+            if losers:
+                text += "❌ <b>Убыточные монеты:</b>\n"
+                for s in losers:
+                    text += (
+                        f"  <b>{s.coin.upper()}</b>  Win {s.win_rate*100:.0f}%  "
+                        f"({s.wins}W/{s.losses}L)  <code>${s.total_pnl:.0f}</code>\n"
+                    )
+                text += "\n"
+
+        best_hours = analysis.get("best_hours", [])
+        if best_hours:
+            hours_str = "  ".join(f"{h:02d}:00" for h in best_hours[:4])
+            text += f"⏰ <b>Лучшее время:</b> {hours_str} UTC\n\n"
+
+        for ins in analysis.get("insights", [])[:5]:
+            text += f"{ins}\n"
+
+        recs = analysis.get("recommendations", [])
+        if recs:
+            text += "\n🎯 <b>Рекомендации:</b>\n"
+            for r in recs[:4]:
+                text += f"  {r}\n"
+
+        await msg.edit_text(text, parse_mode=ParseMode.HTML)
+
+    except Exception as e:
+        logger.error("cmd_myhistory error: %s", e)
+        await msg.edit_text(
+            f"❌ Ошибка: <code>{e}</code>\n\n"
+            "Убедись что BINANCE_API_KEY и BINANCE_API_SECRET есть в .env на VPS.",
+            parse_mode=ParseMode.HTML,
+        )

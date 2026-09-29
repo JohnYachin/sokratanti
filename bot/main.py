@@ -8,6 +8,7 @@ load_dotenv()
 from bot.handlers import (
     cmd_start,
     cmd_price,
+    cmd_futures,
     cmd_signal,
     cmd_sentiment,
     cmd_history,
@@ -20,6 +21,8 @@ from bot.handlers import (
     cmd_optimize,
     cmd_params,
     cmd_results,
+    cmd_account,
+    cmd_myhistory,
 )
 from bot.portfolio_handlers import (
     cmd_portfolio,
@@ -56,6 +59,7 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_start))
     app.add_handler(CommandHandler("price", cmd_price))
+    app.add_handler(CommandHandler("futures", cmd_futures))
     app.add_handler(CommandHandler("signal", cmd_signal))
     app.add_handler(CommandHandler("sentiment", cmd_sentiment))
     app.add_handler(CommandHandler("history", cmd_history))
@@ -75,6 +79,9 @@ def main():
     app.add_handler(CommandHandler("optimize", cmd_optimize))
     app.add_handler(CommandHandler("params", cmd_params))
     app.add_handler(CommandHandler("results", cmd_results))
+    # Binance Account API
+    app.add_handler(CommandHandler("account", cmd_account))
+    app.add_handler(CommandHandler("myhistory", cmd_myhistory))
 
     # --- Автоматические отчёты ---
     schedule_jobs(app)

@@ -13,8 +13,9 @@ analysis/signals.py — Движок торговых сигналов v2.0
   AVOID         — явные красные флаги
 
 Источники данных:
-  - Binance REST (1d + 4h) — основной
-  - CoinGecko (1d)         — fallback
+  - Binance FUTURES (fapi.binance.com) — основной (те же свечи что в Futures Trading)
+  - Binance Spot (api.binance.com)     — fallback если монета не на фьючерсах
+  - CoinGecko (1d)                     — последний fallback
 """
 import logging
 from analysis.technical import (
@@ -26,15 +27,32 @@ logger = logging.getLogger(__name__)
 
 
 def _get_ohlcv(coin: str, interval: str = "1d", limit: int = 200):
-    """Загружает свечи: Binance → CoinGecko (только 1d)."""
+    """
+    Загружает свечи:
+      1. Binance FUTURES (fapi) — основной, те же свечи что в Binance Futures
+      2. Binance Spot            — fallback если монета не на фьючерсах
+      3. CoinGecko (только 1d)  — последний резерв
+    """
+    # ── Приоритет 1: Futures klines (fapi.binance.com) ────────────────────────
     try:
-        from market_data.binance_rest import get_klines
-        df = get_klines(coin, interval=interval, limit=limit)
+        from market_data.binance_futures import get_klines as fut_klines
+        df = fut_klines(coin, interval=interval, limit=limit)
         if not df.empty and len(df) >= 30:
             return df
     except Exception as e:
-        logger.warning("Binance %s %s: %s", coin, interval, e)
+        logger.debug("Futures klines %s %s: %s", coin, interval, e)
 
+    # ── Приоритет 2: Spot klines (api.binance.com) ────────────────────────────
+    try:
+        from market_data.binance_rest import get_klines as spot_klines
+        df = spot_klines(coin, interval=interval, limit=limit)
+        if not df.empty and len(df) >= 30:
+            logger.debug("Using Spot klines for %s %s (Futures unavailable)", coin, interval)
+            return df
+    except Exception as e:
+        logger.warning("Spot klines %s %s: %s", coin, interval, e)
+
+    # ── Приоритет 3: CoinGecko (только 1d) ───────────────────────────────────
     if interval == "1d":
         try:
             from data.coingecko import get_ohlcv
@@ -152,6 +170,20 @@ def _calc_short_score(ind_1d: dict, ind_4h: dict | None,
     elif news_raw > 0.3:
         score -= 8
 
+    # Объём: RVOL (10 pts) — высокий объём подтверждает продажу
+    rvol = ind_1d.get("rvol")
+    if rvol is not None:
+        if rvol >= 2.0:     # высокий объём на падении — подтверждает шорт
+            score += 10
+        elif rvol >= 1.5:
+            score += 5
+        elif rvol < 0.7:    # объём уходит — возможно нет согласия
+            score -= 4
+    # OBV trend для шорта: OBV падает = подтверждение
+    obv_trend = ind_1d.get("obv_trend")
+    if obv_trend == "down" and trend == "bearish":
+        score += 3
+
     return max(0, min(100, score))
 
 
@@ -237,6 +269,20 @@ def _calc_setup_score(ind_1d: dict, ind_4h: dict | None, fg_score: int,
         score += 8
     elif news_raw < -0.3:
         score -= 10
+
+    # Объём: RVOL (10 pts) — подтверждение сигнала
+    rvol = ind_1d.get("rvol")
+    if rvol is not None:
+        if rvol >= 2.0:     # объём вдвое выше среднего — сильный сигнал
+            score += 10
+        elif rvol >= 1.5:   # +50% от среднего
+            score += 6
+        elif rvol < 0.7:    # объём уходит — слабый сигнал
+            score -= 5
+    # OBV trend bonus
+    obv_trend = ind_1d.get("obv_trend")
+    if obv_trend == "up" and trend == "bullish":
+        score += 3
 
     return max(0, min(100, score))
 
@@ -329,6 +375,72 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
         else:
             reasons.append("[1d] MACD ниже нуля — медвежья зона")
     reasons.append(f"[1d] {macd_reason}")
+
+    # Setup Score
+    learned_weights = None
+    try:
+        from analysis.optimizer import get_learned_weights
+        learned_weights = get_learned_weights(coin)
+    except Exception as e:
+        logger.debug("get_learned_weights failed: %s", e)
+
+    setup_score = _calc_setup_score(
+        ind_1d, ind_4h or None, 0, 0, trend,
+        learned_weights=learned_weights,
+    )
+    short_score = _calc_short_score(
+        ind_1d, ind_4h or None, 0, 0, trend,
+    )
+
+     # ── 1h тайминг ───────────────────────────────────────────────────────────────────────────
+    entry_timing = "neutral"  # "now" / "wait" / "neutral" / "overbought" / "short_now"
+    timing_reason = ""
+    if ind_1h:
+        rsi_1h  = ind_1h.get("rsi")
+        macd_1h = ind_1h.get("macd_diff")
+        bb_1h   = ind_1h.get("bb_pband")
+        rvol_1h = ind_1h.get("rvol")
+
+        # Определяем текущий сетап чтобы знать LONG/SHORT приоритет
+        current_setup = "SHORT" if (short_score > setup_score and short_score >= 55) else "LONG"
+
+        if rsi_1h is not None:
+            if current_setup == "SHORT":
+                # Для шорта: ждём перекупленности 1h
+                if rsi_1h >= 65:
+                    entry_timing = "now"
+                    timing_reason = f"1h RSI {rsi_1h:.0f} — перекуплен, вход в шорт"
+                elif rsi_1h <= 40:
+                    entry_timing = "oversold"  # для шорта перепродан = ждём отката
+                    timing_reason = f"1h RSI {rsi_1h:.0f} — перепродан, подожди отката вверх"
+                elif macd_1h is not None and macd_1h < 0 and (bb_1h or 0.5) > 0.5:
+                    entry_timing = "now"
+                    timing_reason = f"1h MACD медвежий + BB верхняя половина — хороший момент для шорта"
+                else:
+                    entry_timing = "wait"
+                    timing_reason = f"1h RSI {rsi_1h:.0f} — ждём перекупа для шорта"
+            else:
+                # Для лонга: ждём перепроданности 1h
+                if rsi_1h <= 38:
+                    entry_timing = "now"
+                    timing_reason = f"1h RSI {rsi_1h:.0f} — перепродан, можно входить"
+                elif rsi_1h >= 65:
+                    entry_timing = "overbought"
+                    timing_reason = f"1h RSI {rsi_1h:.0f} — перекуплен, подожди отката"
+                elif macd_1h is not None and macd_1h > 0 and (bb_1h or 0.5) < 0.5:
+                    entry_timing = "now"
+                    timing_reason = f"1h MACD бычий + BB нижняя половина — хороший момент"
+                else:
+                    entry_timing = "wait"
+                    timing_reason = f"1h RSI {rsi_1h:.0f} — нейтрально, нет идеального входа"
+
+        # Volume spike на 1h — дополнительное подтверждение
+        vol_note = ""
+        if rvol_1h is not None and rvol_1h >= 2.0:
+            vol_note = f" | СПАЙК объёма RVOL={rvol_1h:.1f}x — движение подтверждено"
+        elif rvol_1h is not None and rvol_1h >= 1.5:
+            vol_note = f" | RVOL={rvol_1h:.1f}x"
+        reasons.append((f"[1h] {timing_reason}{vol_note}") if timing_reason else "[1h] нет данных")
 
     bb_reason, bb_score = interpret_bb(ind_1d.get("bb_pband"))
     reasons.append(f"[1d] {bb_reason}")

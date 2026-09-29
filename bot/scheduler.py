@@ -16,16 +16,14 @@ from telegram.constants import ParseMode
 
 logger = logging.getLogger(__name__)
 
+# Монеты с поддержкой Binance USDT-M Futures (fapi.binance.com)
+# Основные 10 по капитализации + трейдинговой ликвидности
 TRACKED_COINS = [
-    # Топ-10
     "btc", "eth", "bnb", "sol", "xrp",
     "doge", "ada", "avax", "link", "dot",
-    # Топ 11-20
-    "near", "ltc", "uni", "shib", "trx",
-    "bch", "atom", "xlm", "etc", "fil",
-    # Топ 21-30
-    "arb", "sui", "pepe", "apt", "hbar",
-    "icp", "vet", "mkr", "aave", "op",
+    # Дополнительные — все есть на Binance Futures
+    "ltc", "atom", "near", "uni", "trx",
+    "bch", "aave", "apt", "arb", "op",
 ]
 
 # Статусы, по которым шлём алерт
@@ -348,22 +346,50 @@ async def _check_signal_alerts(context):
                 continue
 
             # Цена и торговый план
-            price_data = await asyncio.to_thread(get_price, coin)
-            price      = price_data["price_usd"]
-            ch         = price_data.get("change_24h", 0.0)
+            # Используем Futures Mark Price (тот же курс что в Binance Futures)
+            try:
+                from market_data.binance_futures import get_futures_ticker
+                ft = await asyncio.to_thread(get_futures_ticker, coin)
+                price = ft["mark_price"] if ft["mark_price"] > 0 else ft["last_price"]
+                ch    = ft["price_change_pct"]
+                fr_pct = ft["last_funding_rate_pct"]
+                fr_icon = "🔴" if fr_pct > 0.05 else ("🟢" if fr_pct < -0.02 else "⚪")
+                price_note = (
+                    f"📊 Mark: <code>${price:,.4f}</code> "
+                    f"({'📈' if ch>=0 else '📉'}{ch:+.2f}%)  "
+                    f"{fr_icon} Фандинг: <code>{fr_pct:+.4f}%</code>"
+                )
+            except Exception:
+                price_data = await asyncio.to_thread(get_price, coin)
+                price = price_data["price_usd"]
+                ch    = price_data.get("change_24h", 0.0)
+                price_note = f"💵 <code>${price:,.4f}</code> ({'📈' if ch>=0 else '📉'}{ch:+.1f}%)"
             setup_score = result.get("setup_score", 0)
-            plan = result.get("trading_plan")
+            direction   = result.get("direction", "LONG")
+            plan = result.get("trading_plan") if direction != "SHORT" else result.get("short_plan")
 
             # Строим сообщение с плечом
             if plan and plan.setup_valid:
                 entry_low  = float(plan.entry_low)
                 entry_high = float(plan.entry_high)
                 stop       = float(plan.stop_loss)
-                t1         = float(plan.target1)
-                t2         = float(plan.target2) if plan.target2 else None
+                t1         = float(plan.target_1)
+                t2         = float(plan.target_2) if plan.target_2 else None
                 entry_mid  = (entry_low + entry_high) / 2
 
-                lev_data = recommend_leverage(setup_score, entry_mid, stop, t1, t2)
+                # Futures-aware leverage: передаём funding и ATR
+                futures_ctx = result.get("futures_ctx", {})
+                funding_pct = futures_ctx.get("funding_rate_pct", 0.0)
+                ind         = result.get("indicators", {})
+                atr         = ind.get("atr")
+                atr_pct_val = (atr / entry_mid) if (atr and entry_mid) else None
+
+                lev_data = recommend_leverage(
+                    setup_score, entry_mid, stop, t1, t2,
+                    funding_rate_pct=funding_pct,
+                    atr_pct=atr_pct_val,
+                    direction=direction,
+                )
 
                 # Краткие причины
                 reasons_short = result["reasons"][:4]
@@ -393,16 +419,15 @@ async def _check_signal_alerts(context):
                     target2=t2,
                     leverage=lev_data["leverage"],
                 )
-                logger.info("Signal trade saved: id=%d %s %s lev=%dx",
-                            trade_id, coin.upper(), status, lev_data["leverage"])
+                logger.info("Signal trade saved: id=%d %s %s lev=%dx dir=%s",
+                            trade_id, coin.upper(), status, lev_data["leverage"], direction)
             else:
                 # Нет плана — упрощённый алерт
                 reasons_html = "\n".join(f"  • {r}" for r in result["reasons"][:5])
                 text = (
                     f"🚨 <b>АЛЕРТ: {coin.upper()} → {result['emoji']} {result.get('label_ru', status)}</b>\n"
                     f"Score: <code>{setup_score}/100</code>\n\n"
-                    f"💵 <code>${price:,.4f}</code> "
-                    f"({'📈' if ch >= 0 else '📉'} {ch:+.1f}%)\n\n"
+                    f"{price_note}\n\n"
                     f"{reasons_html}"
                 )
 
