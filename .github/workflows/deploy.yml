@@ -1,0 +1,27 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Deploy to Hostinger VPS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          port:     22
+          script: |
+            set -e
+            cd /opt/sokratanti
+            git pull origin main
+            pip install -r requirements.txt -q
+            systemctl restart sokratanti
+            sleep 3
+            systemctl is-active sokratanti && echo "OK: bot is running" || echo "ERROR: bot failed to start"
