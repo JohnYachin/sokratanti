@@ -44,6 +44,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def error_handler(update, context):
+    """Логирует все необработанные ошибки."""
+    logger.error("Unhandled exception in handler:", exc_info=context.error)
+    if update and update.effective_message:
+        try:
+            await update.effective_message.reply_text(
+                "⚠️ Произошла ошибка при обработке команды. Попробуй ещё раз."
+            )
+        except Exception:
+            pass
+
+
 def main():
     """Точка входа — запуск Telegram-бота."""
     init_db()
@@ -54,6 +66,9 @@ def main():
         raise ValueError("❌ TELEGRAM_BOT_TOKEN не найден в .env файле!")
 
     app = Application.builder().token(token).build()
+
+    # --- Обработчик ошибок ---
+    app.add_error_handler(error_handler)
 
     # --- Команды ---
     app.add_handler(CommandHandler("start", cmd_start))
@@ -87,4 +102,4 @@ def main():
     schedule_jobs(app)
 
     logger.info("🤖 Sokratanti запущен. Ctrl+C для остановки.")
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(drop_pending_updates=False)
