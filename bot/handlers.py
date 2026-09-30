@@ -1191,3 +1191,216 @@ async def cmd_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"❌ Ошибка анализа: <code>{e}</code>",
             parse_mode=ParseMode.HTML,
         )
+
+
+# ── /report — Полный отчёт: история + рынок сейчас ───────────────────────────
+@auth_required
+async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Разбор твоих сделок + текущий рынок по главным монетам. Простым языком."""
+    msg = await update.message.reply_text(
+        "📊 Собираю отчёт... (~30 сек)", parse_mode=ParseMode.HTML
+    )
+
+    # Монеты для анализа рынка
+    MAIN_COINS = ["btc", "eth", "bnb", "sol", "doge", "ton"]
+
+    def _simple_verdict(sig: dict) -> tuple[str, str]:
+        """Переводит технический сигнал в понятный вывод."""
+        status = sig.get("status", "")
+        score  = sig.get("setup_score", 0)
+        short  = sig.get("short_score", 0)
+        timing = sig.get("entry_timing", "neutral")
+        trend  = sig.get("trend", "neutral")
+
+        if status in ("STRONG_SETUP",) and timing == "now":
+            return "🟢", "ВХОДИТЬ В ЛОНГ сейчас"
+        elif status == "STRONG_SETUP":
+            return "🟡", "Ожидается РОСТ — готовься к входу"
+        elif status == "BUY_ZONE" and timing == "now":
+            return "🟡", "Можно открывать лонг"
+        elif status == "BUY_ZONE":
+            return "🟡", "Вероятен РОСТ — жди подтверждения"
+        elif status in ("STRONG_SHORT",):
+            return "🔴", "Ожидается ПАДЕНИЕ — не входи в лонг"
+        elif status == "SHORT_ZONE":
+            return "🔴", "Скорее всего ПАДЕНИЕ — жди"
+        elif status == "EVENT_RISK":
+            return "⛔", "Высокий риск — не входить"
+        elif trend == "bearish" or score < 30:
+            return "🔴", "Нисходящий тренд — ПАДЕНИЕ"
+        elif score >= 45:
+            return "🟡", "Нейтрально — нет чёткого входа"
+        else:
+            return "⚪", "Жди — нет сигнала"
+
+    def _get_price_str(sig: dict) -> str:
+        price = sig.get("indicators", {}).get("price")
+        if price:
+            if price >= 1000:
+                return f"${price:,.0f}"
+            elif price >= 1:
+                return f"${price:,.2f}"
+            else:
+                return f"${price:.4f}"
+        return ""
+
+    try:
+        def _run():
+            from analysis.trade_analyzer import analyze_my_trades
+            from analysis.signals import generate_signal
+            import datetime
+
+            # ── 1. История сделок ─────────────────────────────────────────────
+            history = analyze_my_trades(days=90)
+            trade_error = "error" in history
+
+            # ── 2. Рынок сейчас (все 6 монет параллельно) ────────────────────
+            market = {}
+            for coin in MAIN_COINS:
+                try:
+                    market[coin] = generate_signal(coin)
+                except Exception as e:
+                    logger.error("Report signal %s: %s", coin, e)
+                    market[coin] = None
+
+            return history, market, trade_error
+
+        history, market, trade_error = await asyncio.to_thread(_run)
+
+        # ════════════════════════════════════════════════════════
+        # БЛОК 1: РАЗБОР ТВОИХ СДЕЛОК
+        # ════════════════════════════════════════════════════════
+        text = "📋 <b>ПОЛНЫЙ ОТЧЁТ</b>\n\n"
+
+        if not trade_error:
+            wr      = history.get("win_rate", 0)
+            pnl     = history.get("total_pnl", 0)
+            trades  = history.get("total_trades", 0)
+            best    = history.get("best_coins", [])
+            worst   = history.get("worst_coins", [])
+            hours   = history.get("best_hours", [])
+            by_coin = history.get("by_coin", {})
+            days    = history.get("days_analyzed", 90)
+
+            text += (
+                f"🔍 <b>Анализ твоих сделок за {days} дней</b>\n"
+                f"Всего сделок: <b>{trades}</b> | Win Rate: <b>{wr*100:.0f}%</b>\n"
+                f"Итог: <b>{'+'if pnl>0 else ''}{pnl:.0f}$</b>\n\n"
+            )
+
+            # Что сделал не так
+            text += "❗ <b>Что пошло не так:</b>\n"
+            mistakes = []
+
+            # Убыточные монеты
+            for c in worst[:3]:
+                s = by_coin.get(c)
+                if s and s.total_pnl < 0:
+                    mistakes.append(
+                        f"  • Торговал <b>{c.upper()}</b> — {s.total_trades} сделок, "
+                        f"убыток {s.total_pnl:.0f}$ (WR {s.win_rate*100:.0f}%). "
+                        f"Эту монету стоит исключить."
+                    )
+
+            # Плохое соотношение риск/прибыль
+            bad_rr = [s for s in by_coin.values()
+                      if s.avg_win_pct > 0 and s.avg_loss_pct < 0
+                      and abs(s.avg_loss_pct) > s.avg_win_pct * 1.5 and s.total_trades >= 3]
+            if bad_rr:
+                coins_rr = ", ".join(s.coin.upper() for s in bad_rr[:3])
+                mistakes.append(
+                    f"  • По {coins_rr} — убытки больше прибылей. "
+                    f"Нужно ставить стоп-лосс раньше."
+                )
+
+            # Ночная торговля
+            by_hour = history.get("by_hour", {})
+            night_hours = [h for h, s in by_hour.items()
+                           if h in (22, 23, 0, 1, 2) and s["win_rate"] < 0.4
+                           and (s["wins"] + s["losses"]) >= 2]
+            if night_hours:
+                mistakes.append(
+                    f"  • Торговля ночью ({', '.join(f'{h:02d}:00' for h in sorted(night_hours)[:3])} UTC) "
+                    f"— убыточна. Лучше не торговать ночью."
+                )
+
+            if pnl < 0 and wr > 0.5:
+                mistakes.append(
+                    "  • Win rate высокий, но итог отрицательный — "
+                    "убыточные сделки слишком большие. Режь убытки раньше!"
+                )
+
+            if not mistakes:
+                mistakes.append("  • По истории явных системных ошибок не выявлено.")
+
+            text += "\n".join(mistakes) + "\n\n"
+
+            # Что улучшить
+            text += "✅ <b>Что нужно делать:</b>\n"
+            if best:
+                text += f"  • Торгуй только: <b>{', '.join(c.upper() for c in best[:3])}</b> — тут ты зарабатываешь\n"
+            if worst:
+                text += f"  • Не трогай: <b>{', '.join(c.upper() for c in worst[:3])}</b> — убыточно\n"
+            if hours:
+                text += f"  • Лучшее время входа: <b>{', '.join(f'{h:02d}:00' for h in hours[:3])} UTC</b>\n"
+            text += "  • Ставь стоп-лосс сразу при входе\n"
+            text += "  • Не усредняй убыточную позицию\n\n"
+        else:
+            text += "⚠️ История сделок недоступна (нет ключей Binance)\n\n"
+
+        # ════════════════════════════════════════════════════════
+        # БЛОК 2: РЫНОК СЕЙЧАС
+        # ════════════════════════════════════════════════════════
+        text += "━━━━━━━━━━━━━━━━━━━━\n"
+        text += "📈 <b>Рынок сейчас</b>\n\n"
+
+        coin_names = {
+            "btc": "Bitcoin",  "eth": "Ethereum",
+            "bnb": "BNB",      "sol": "Solana",
+            "doge": "Dogecoin","ton": "TON",
+        }
+
+        for coin in MAIN_COINS:
+            sig = market.get(coin)
+            name = coin_names.get(coin, coin.upper())
+
+            if not sig:
+                text += f"⚪ <b>{name}</b> — нет данных\n\n"
+                continue
+
+            icon, verdict = _simple_verdict(sig)
+            price_str = _get_price_str(sig)
+            score = sig.get("setup_score", 0)
+
+            # Главная причина (первые 2 факта)
+            reasons = sig.get("reasons", [])
+            key_fact = ""
+            for r in reasons[:4]:
+                if any(k in r for k in ("RSI", "MACD", "тренд", "Тренд", "фандинг", "Funding")):
+                    clean = r.replace("[1d] ", "").replace("[4h] ", "").replace("[1h] ", "")
+                    key_fact = clean[:60]
+                    break
+
+            text += (
+                f"{icon} <b>{name}</b> {price_str}\n"
+                f"   {verdict}\n"
+            )
+            if key_fact:
+                text += f"   <i>{key_fact}</i>\n"
+            text += "\n"
+
+        text += (
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "<i>⚠️ Это аналитика, не финансовый совет. "
+            "Решение всегда за тобой.\n"
+            "/signal BTC — подробный анализ монеты</i>"
+        )
+
+        await msg.edit_text(text, parse_mode=ParseMode.HTML)
+
+    except Exception as e:
+        logger.error("cmd_report error: %s", e, exc_info=True)
+        await msg.edit_text(
+            f"❌ Ошибка: <code>{e}</code>",
+            parse_mode=ParseMode.HTML,
+        )

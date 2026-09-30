@@ -24,6 +24,7 @@ from bot.handlers import (
     cmd_account,
     cmd_myhistory,
     cmd_strategy,
+    cmd_report,
 )
 from bot.portfolio_handlers import (
     cmd_portfolio,
@@ -100,6 +101,8 @@ def main():
     app.add_handler(CommandHandler("myhistory", cmd_myhistory))
     # Персональная стратегия
     app.add_handler(CommandHandler("strategy", cmd_strategy))
+    # Полный отчёт (история + рынок сейчас)
+    app.add_handler(CommandHandler("report", cmd_report))
 
     # --- Автоматические отчёты ---
     schedule_jobs(app)
