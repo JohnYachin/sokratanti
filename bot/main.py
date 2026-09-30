@@ -23,6 +23,7 @@ from bot.handlers import (
     cmd_results,
     cmd_account,
     cmd_myhistory,
+    cmd_strategy,
 )
 from bot.portfolio_handlers import (
     cmd_portfolio,
@@ -97,6 +98,8 @@ def main():
     # Binance Account API
     app.add_handler(CommandHandler("account", cmd_account))
     app.add_handler(CommandHandler("myhistory", cmd_myhistory))
+    # Персональная стратегия
+    app.add_handler(CommandHandler("strategy", cmd_strategy))
 
     # --- Автоматические отчёты ---
     schedule_jobs(app)

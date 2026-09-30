@@ -16,6 +16,9 @@ from typing import NamedTuple
 
 logger = logging.getLogger(__name__)
 
+# Кэш лучших часов — заполняется при вызове analyze_my_trades()
+_BEST_HOURS_CACHE: dict = {}
+
 TRACKED_COINS = [
     "btc", "eth", "bnb", "sol", "xrp",
     "doge", "ada", "avax", "link", "dot",
@@ -149,6 +152,10 @@ def analyze_my_trades(days: int = 90) -> dict:
     # ── Инсайты ──────────────────────────────────────────────────────────────
     insights = _generate_insights(by_coin, by_hour_stats, win_rate, total_pnl)
     recommendations = _generate_recommendations(by_coin, best_coins, worst_coins, best_hours)
+
+    # Заполняем глобальный кэш лучших часов
+    _BEST_HOURS_CACHE["hours"] = best_hours
+    _BEST_HOURS_CACHE["by_hour"] = by_hour_stats
 
     return {
         "total_trades":  total_trades,

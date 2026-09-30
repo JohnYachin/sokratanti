@@ -72,6 +72,14 @@ def schedule_jobs(app: Application):
         data={"user_id": user_id},
         name="signal_outcomes",
     )
+    # Персональный алерт каждые 2 часа — совпадение с личной стратегией
+    app.job_queue.run_repeating(
+        _check_personal_strategy_alert,
+        interval=7200,   # каждые 2 часа
+        first=120,
+        data={"user_id": user_id},
+        name="personal_alert",
+    )
     # Еженедельная авто-оптимизация (воскресенье 03:00 UTC)
     import datetime as _dt
     app.job_queue.run_daily(
@@ -568,3 +576,133 @@ async def _check_signal_outcomes(context):
 
         except Exception as e:
             logger.error("Outcome check error %s #%d: %s", coin, trade_id, e)
+
+
+# ── Персональный алерт — совпадение стратегии ────────────────────────────────
+async def _check_personal_strategy_alert(context) -> None:
+    """
+    Каждые 2 часа проверяет:
+    1. Сейчас твоё лучшее время входа?
+    2. Твои лучшие монеты дают хороший сетап?
+    Если оба условия — шлёт персональный алерт.
+    """
+    import datetime
+    user_id = context.job.data.get("user_id")
+    if not user_id:
+        return
+
+    now_hour = datetime.datetime.utcnow().hour
+
+    try:
+        def _run():
+            from analysis.trade_analyzer import analyze_my_trades
+            from analysis.signals import generate_signal
+
+            # Загружаем личную статистику
+            history = analyze_my_trades(days=90)
+            if "error" in history:
+                return None
+
+            best_hours = history.get("best_hours", [])
+            best_coins = history.get("best_coins", [])
+            worst_coins = history.get("worst_coins", [])
+            by_coin = history.get("by_coin", {})
+
+            # Проверяем время
+            is_good_time = now_hour in best_hours
+            if not is_good_time and best_hours:
+                # Если следующий лучший час через <= 1ч — тоже шлём предупреждение
+                next_best = min(
+                    [(h - now_hour) % 24 for h in best_hours]
+                )
+                if next_best > 1:
+                    return None  # Не время — не шлём
+
+            # Проверяем лучшие монеты
+            opportunities = []
+            for coin in best_coins[:4]:
+                try:
+                    sig = generate_signal(coin)
+                    status = sig.get("status", "")
+                    score = sig.get("setup_score", 0)
+                    action = sig.get("action", "")
+                    stats = by_coin.get(coin)
+                    personal_wr = stats.win_rate if stats else 0
+
+                    # Только хорошие сетапы
+                    if status in ("STRONG_SETUP", "BUY_ZONE", "STRONG_SHORT", "SHORT_ZONE") or score >= 55:
+                        from market_data.binance_futures import get_futures_ticker
+                        ticker = get_futures_ticker(coin)
+                        price = ticker.get("price", 0)
+                        chg = ticker.get("change_pct_24h", 0)
+                        opportunities.append({
+                            "coin": coin,
+                            "status": status,
+                            "score": score,
+                            "action": action,
+                            "price": price,
+                            "chg": chg,
+                            "personal_wr": personal_wr,
+                        })
+                except Exception:
+                    pass
+
+            if not opportunities:
+                return None
+
+            return {
+                "opportunities": opportunities,
+                "best_hours": best_hours,
+                "worst_coins": worst_coins,
+                "is_good_time": is_good_time,
+            }
+
+        result = await asyncio.to_thread(_run)
+        if not result:
+            return
+
+        opps = result["opportunities"]
+        best_hours = result["best_hours"]
+        is_good_time = result["is_good_time"]
+        best_hours_str = ", ".join(f"{h:02d}:00" for h in best_hours[:3])
+
+        time_banner = (
+            f"✅ Сейчас {now_hour:02d}:00 UTC — твоё ЛУЧШЕЕ время входа!"
+            if is_good_time else
+            f"⏰ Скоро {best_hours_str} UTC — готовься к входу"
+        )
+
+        text = (
+            f"🧠 <b>ПЕРСОНАЛЬНЫЙ АЛЕРТ</b>\n"
+            f"{time_banner}\n\n"
+            f"🎯 <b>Совпадение с твоей стратегией:</b>\n"
+        )
+
+        for opp in opps[:3]:
+            coin = opp["coin"].upper()
+            score = opp["score"]
+            action = opp["action"]
+            price = opp["price"]
+            chg = opp["chg"]
+            wr = opp["personal_wr"]
+            icon = "🟢" if score >= 70 else "🟡"
+
+            text += (
+                f"\n{icon} <b>{coin}</b> — {action}\n"
+                f"   Скор: {score}/100 | Цена: ${price:,.4g} ({chg:+.1f}%)\n"
+                f"   Твоя история: WR {wr*100:.0f}%\n"
+            )
+
+        text += (
+            f"\n💡 Используй /signal &lt;монета&gt; для полного анализа\n"
+            f"<i>⚠️ Это личный ассистент, не робот. Решение только твоё.</i>"
+        )
+
+        await context.bot.send_message(
+            chat_id=user_id, text=text, parse_mode=ParseMode.HTML,
+        )
+        logger.info("Personal strategy alert sent: %d opportunities at hour %d UTC",
+                    len(opps), now_hour)
+
+    except Exception as e:
+        logger.error("Personal strategy alert error: %s", e)

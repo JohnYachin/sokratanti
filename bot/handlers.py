@@ -1056,3 +1056,138 @@ async def cmd_myhistory(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Убедись что BINANCE_API_KEY и BINANCE_API_SECRET есть в .env на VPS.",
             parse_mode=ParseMode.HTML,
         )
+
+
+# ── /strategy — Персональная стратегия ───────────────────────────────────────
+@auth_required
+async def cmd_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Анализ личной истории + текущие совпадения с рынком."""
+    msg = await update.message.reply_text("🧠 Анализирую твою стратегию...", parse_mode=ParseMode.HTML)
+
+    try:
+        def _analyze():
+            from analysis.trade_analyzer import analyze_my_trades, get_coin_personal_score
+            from market_data.binance_futures import get_futures_ticker
+            import datetime
+
+            # Загружаем историю
+            analysis = analyze_my_trades(days=90)
+            if "error" in analysis:
+                return None, analysis["error"]
+
+            best_coins  = analysis.get("best_coins", [])
+            worst_coins = analysis.get("worst_coins", [])
+            best_hours  = analysis.get("best_hours", [])
+            by_coin     = analysis.get("by_coin", {})
+
+            # Текущий час UTC
+            now_hour = datetime.datetime.utcnow().hour
+            is_good_time = now_hour in best_hours
+
+            # Проверяем лучшие монеты на текущем рынке
+            opportunities = []
+            for coin in best_coins[:5]:
+                try:
+                    ticker = get_futures_ticker(coin)
+                    price  = ticker.get("price", 0)
+                    chg    = ticker.get("change_pct_24h", 0)
+                    stats  = by_coin.get(coin)
+                    wr_str = f"{stats.win_rate*100:.0f}%" if stats else "?"
+                    pnl_str = f"+${stats.total_pnl:.0f}" if stats and stats.total_pnl > 0 else ""
+                    direction = "📈" if chg > 0 else "📉"
+                    opportunities.append(
+                        f"  {direction} <b>{coin.upper()}</b> "
+                        f"${price:,.4g} ({chg:+.1f}%) "
+                        f"| твоя WR: {wr_str} {pnl_str}"
+                    )
+                except Exception:
+                    opportunities.append(f"  📊 <b>{coin.upper()}</b> | данные недоступны")
+
+            return analysis, opportunities, is_good_time, now_hour
+
+        result = await asyncio.to_thread(_analyze)
+        if result[0] is None:
+            await msg.edit_text(f"❌ {result[1]}", parse_mode=ParseMode.HTML)
+            return
+
+        analysis, opportunities, is_good_time, now_hour = result
+        best_coins  = analysis.get("best_coins", [])
+        worst_coins = analysis.get("worst_coins", [])
+        best_hours  = analysis.get("best_hours", [])
+        by_coin     = analysis.get("by_coin", {})
+        win_rate    = analysis.get("win_rate", 0)
+        total_pnl   = analysis.get("total_pnl", 0)
+        total_trades = analysis.get("total_trades", 0)
+        days        = analysis.get("days_analyzed", 90)
+
+        # Форматируем время
+        time_icon = "✅" if is_good_time else "⏳"
+        best_hours_str = ", ".join(f"{h:02d}:00" for h in best_hours[:4]) if best_hours else "нет данных"
+
+        text = (
+            f"🧠 <b>Твоя персональная стратегия</b>\n"
+            f"<i>(на основе {total_trades} сделок за {days} дней)</i>\n\n"
+
+            f"📊 <b>Общая статистика:</b>\n"
+            f"  Win Rate: <b>{win_rate*100:.0f}%</b>\n"
+            f"  Итог P&L: <b>{'+'if total_pnl>0 else ''}{total_pnl:.0f}$</b>\n\n"
+        )
+
+        # Лучшие монеты
+        if best_coins:
+            text += "🏆 <b>Твои лучшие монеты:</b>\n"
+            for c in best_coins[:3]:
+                s = by_coin.get(c)
+                if s:
+                    text += f"  ✅ <b>{c.upper()}</b> — WR {s.win_rate*100:.0f}%, P&L ${s.total_pnl:+.0f}\n"
+            text += "\n"
+
+        # Худшие монеты
+        if worst_coins:
+            text += "🚫 <b>Избегай этих монет:</b>\n"
+            for c in worst_coins[:3]:
+                s = by_coin.get(c)
+                if s:
+                    text += f"  ❌ <b>{c.upper()}</b> — WR {s.win_rate*100:.0f}%, P&L ${s.total_pnl:+.0f}\n"
+            text += "\n"
+
+        # Время
+        text += (
+            f"⏰ <b>Лучшее время входа (UTC):</b>\n"
+            f"  {best_hours_str}\n"
+            f"  {time_icon} Сейчас {now_hour:02d}:00 UTC — "
+            f"{'ХОРОШИЙ момент!' if is_good_time else 'не лучшее время'}\n\n"
+        )
+
+        # Текущие возможности
+        if opportunities:
+            text += "🎯 <b>Текущие возможности (твои монеты):</b>\n"
+            for opp in opportunities[:5]:
+                text += opp + "\n"
+            text += "\n"
+
+        # Инсайты
+        insights = analysis.get("insights", [])
+        if insights:
+            text += "💡 <b>Ключевые выводы:</b>\n"
+            for ins in insights[:3]:
+                text += f"  {ins}\n"
+            text += "\n"
+
+        # Рекомендации
+        recs = analysis.get("recommendations", [])
+        if recs:
+            text += "📋 <b>Что делать:</b>\n"
+            for r in recs[:3]:
+                text += f"  {r}\n"
+
+        text += "\n<i>Используй /signal &lt;монета&gt; для детального анализа.\nСтратегия обновляется автоматически.</i>"
+
+        await msg.edit_text(text, parse_mode=ParseMode.HTML)
+
+    except Exception as e:
+        logger.error("cmd_strategy error: %s", e)
+        await msg.edit_text(
+            f"❌ Ошибка анализа: <code>{e}</code>",
+            parse_mode=ParseMode.HTML,
+        )

@@ -572,6 +572,27 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
         setup_score = max(setup_score - 30, 0)
         short_score = max(short_score - 30, 0)
 
+    # ── Персональная история (Phase 18) ──────────────────────────────────────
+    personal_wr = None
+    try:
+        from analysis.trade_analyzer import get_coin_personal_score, _BEST_HOURS_CACHE
+        import datetime
+        personal = get_coin_personal_score(coin)
+        if personal["score_adj"] != 0:
+            setup_score = max(0, min(100, setup_score + personal["score_adj"]))
+            note = personal.get("note", "")
+            if note:
+                reasons.append(note)
+        personal_wr = personal.get("personal_wr")
+        # Поправка по лучшему часу UTC
+        current_hour = datetime.datetime.utcnow().hour
+        best_hours = _BEST_HOURS_CACHE.get("hours", [])
+        if best_hours and current_hour in best_hours:
+            setup_score = min(100, setup_score + 8)
+            reasons.append(f"⏰ Твоё лучшее время входа ({current_hour:02d}:00 UTC) — +8 к скору")
+    except Exception as _pe:
+        logger.debug("Personal score: %s", _pe)
+
     status, emoji, label_ru, direction = _signal_status(setup_score, has_critical, short_score)
 
     # ── Определяем ACTION (главный вывод) ────────────────────────────────────
