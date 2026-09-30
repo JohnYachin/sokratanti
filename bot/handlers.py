@@ -289,138 +289,119 @@ async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ── ACTION — главная строка ───────────────────────────────────────────
         action      = result.get("action", "НЕТ СИГНАЛА")
         action_icon = result.get("action_icon", "⚪")
-        action_desc = result.get("action_desc", "")
         setup_score = result.get("setup_score", 0)
+        short_score = result.get("short_score", 0)
         timing      = result.get("entry_timing", "neutral")
         trend       = result.get("trend", "unknown")
         status      = result.get("status", "NO_EDGE")
+        direction   = result.get("direction", "LONG")
+        plan        = result.get("trading_plan") if direction != "SHORT" else result.get("short_plan")
+        USER_LEV    = 10  # Плечо пользователя
 
-        filled = round(setup_score / 10)
-        bar    = "█" * filled + "░" * (10 - filled)
-
-        trend_icon = {"bullish": "📈", "bearish": "📉", "neutral": "➡️"}.get(trend, "❓")
-        timing_icons = {
-            "now":        "🟢 СЕЙЧАС",
-            "wait":       "🕐 ЖДАТЬ",
-            "overbought": "⛔ ПЕРЕКУПЛЕН",
-            "neutral":    "🔘 НЕЙТРАЛЬНО",
-        }
-        timing_str = timing_icons.get(timing, "🔘")
-
-        # ── Торговый план ─────────────────────────────────────────────────────
-        direction  = result.get("direction", "LONG")
-        plan       = result.get("trading_plan") if direction != "SHORT" else result.get("short_plan")
-        plan_block = ""
-        lev_block  = ""
-        if plan and plan.setup_valid:
-            entry_mid = (plan.entry_low + plan.entry_high) / 2
-            t1 = plan.target_1
-            t2 = plan.target_2
-            rr_str = f"1:{plan.risk_reward:.1f}" if plan.risk_reward else "—"
-            dir_label = "📥 Шорт:" if direction == "SHORT" else "📥 Вход:"
-            stop_label = "🛑 Стоп (выше):" if direction == "SHORT" else "🛑 Стоп:"
-
-            plan_block = (
-                f"\n💰 <b>ТОРГОВЫЙ ПЛАН ({direction}):</b>\n"
-                f"  {dir_label}  <code>{fp(plan.entry_low)} — {fp(plan.entry_high)}</code>\n"
-                f"  {stop_label} <code>{fp(plan.stop_loss)}</code>  "
-                f"(<code>-{plan.risk_pct:.1f}%</code>)\n"
-                f"  🎯 Цель 1:  <code>{fp(t1)}</code>  (R/R {rr_str})\n"
-            )
-            if t2:
-                plan_block += f"  🎯 Цель 2:  <code>{fp(t2)}</code>\n"
-            if getattr(plan, "chase_limit", None):
-                plan_block += f"  ⛔ Не входить {'ниже' if direction=='SHORT' else 'выше'}: <code>{fp(plan.chase_limit)}</code>\n"
-
-            # Плечо — теперь с фандингом, ATR и ценой ликвидации
-            try:
-                from analysis.leverage import recommend_leverage, calc_liquidation_price
-                futures_ctx = result.get("futures_ctx", {})
-                funding_pct = futures_ctx.get("funding_rate_pct", 0.0)
-                # Fallback: из futures_ticker если есть
-                if not funding_pct and futures_ticker:
-                    funding_pct = futures_ticker.get("last_funding_rate_pct", 0.0)
-
-                atr     = ind.get("atr")
-                atr_pct = (atr / entry_mid) if (atr and entry_mid) else None
-
-                lev_data = recommend_leverage(
-                    setup_score, entry_mid, plan.stop_loss,
-                    t1 or entry_mid * 1.05, t2,
-                    funding_rate_pct=funding_pct,
-                    atr_pct=atr_pct,
-                    direction=direction,
-                )
-                lev      = lev_data["leverage"]
-                lev_icon = "🟢" if lev <= 2 else ("🟡" if lev <= 3 else "🔴")
-                liq      = lev_data["liquidation_price"]
-                liq_safe = lev_data["liq_safe"]
-                liq_warn = "" if liq_safe else "  ⚠️ <b>ПРОВЕРЬ СТОП: близко к ликвидации!</b>\n"
-
-                lev_block = (
-                    f"\n{lev_icon} <b>ПЛЕЧО: {lev}x</b>  |  {lev_data['confidence']}\n"
-                    f"  Риск со стопом:   <code>-{lev_data['risk_lev_pct']:.1f}%</code>\n"
-                    f"  Доход T1 ×{lev}:  <code>+{lev_data['reward1_lev']:.1f}%</code>\n"
-                    f"  💀 Ликвидация:    <code>{fp(liq)}</code>\n"
-                    f"{liq_warn}"
-                    f"  Маржа (2% риск):  ~<code>{lev_data['margin_pct']:.0f}%</code> депо\n"
-                )
-                if lev_data.get("funding_note"):
-                    lev_block += f"  {lev_data['funding_note']}\n"
-            except Exception:
-                lev_block = ""
-        else:
-            plan_block = (
-                f"\n💰 <b>УРОВНИ:</b>\n"
-                f"  EMA20: <code>{fp(ind.get('ema20'))}</code>  "
-                f"  EMA50: <code>{fp(ind.get('ema50'))}</code>\n"
-                f"  BB нижняя: <code>{fp(ind.get('bb_low'))}</code>  "
-                f"  BB верхняя: <code>{fp(ind.get('bb_high'))}</code>\n"
-            )
-
-        # ── Индикаторы коротко ────────────────────────────────────────────────
-        rsi_1d  = ind.get("rsi")
-        rsi_4h  = ind.get("rsi_4h")
-        rsi_1h  = ind.get("rsi_1h")
-        macd_d  = ind.get("macd_diff")
-        adx_v   = ind.get("adx")
-
-        def rsi_color(v):
+        def fp(v):
             if v is None: return "—"
-            if v <= 30: return f"🔵{v:.0f}"  # перепродан
-            if v >= 70: return f"🔴{v:.0f}"  # перекуплен
-            return f"{v:.0f}"
+            if v >= 1000: return f"${v:,.0f}"
+            if v >= 1:    return f"${v:,.2f}"
+            return f"${v:.5f}"
 
-        ind_block = (
-            f"\n📊 <b>Индикаторы:</b>\n"
-            f"  RSI   1d/4h/1h: <code>{rsi_color(rsi_1d)} / {rsi_color(rsi_4h)} / {rsi_color(rsi_1h)}</code>\n"
-            f"  MACD  1d: <code>{'▲' if (macd_d or 0)>0 else '▼'} {macd_d:+.5f}</code>\n"
-            f"  ADX:  <code>{adx_v:.1f}</code>  {trend_icon} тренд: {trend}\n"
-        ) if macd_d is not None else ""
+        # ── СИЛЬНЫЙ СИГНАЛ ────────────────────────────────────────────────────
+        IS_STRONG  = status in ("STRONG_SETUP", "BUY_ZONE") and setup_score >= 55
+        IS_SHORT   = status in ("STRONG_SHORT", "SHORT_ZONE") and short_score >= 55
+        IS_ACTIVE  = IS_STRONG or IS_SHORT
 
-        # ── Ключевой вывод ────────────────────────────────────────────────────
-        if status in ("STRONG_SETUP", "BUY_ZONE"):
-            when_block = (
-                f"\n⏰ <b>КОГДА ВХОДИТЬ:</b>\n"
-                f"  1h тайминг: {timing_str}\n"
-                f"  <i>{result.get('timing_reason', '')}</i>\n"
+        if IS_ACTIVE and plan and plan.setup_valid:
+            dir_label  = "ШОРТ" if IS_SHORT else "ЛОНГ"
+            dir_icon   = "🔴" if IS_SHORT else "🟢"
+            urgency    = "СРОЧНО " if timing == "now" else ""
+
+            entry_mid  = (plan.entry_low + plan.entry_high) / 2
+            sl         = plan.stop_loss
+            tp1        = plan.target_1
+            tp2        = plan.target_2
+
+            # % от цены (без плеча)
+            if IS_SHORT:
+                sl_pct   = (sl - entry_mid) / entry_mid * 100   # SL выше цены
+                tp1_pct  = (entry_mid - tp1) / entry_mid * 100  # TP ниже цены
+                tp2_pct  = (entry_mid - tp2) / entry_mid * 100 if tp2 else 0
+            else:
+                sl_pct   = (entry_mid - sl) / entry_mid * 100   # SL ниже цены
+                tp1_pct  = (tp1 - entry_mid) / entry_mid * 100  # TP выше цены
+                tp2_pct  = (tp2 - entry_mid) / entry_mid * 100 if tp2 else 0
+
+            # x10 расчёт
+            risk_10x    = sl_pct  * USER_LEV
+            gain1_10x   = tp1_pct * USER_LEV
+            gain2_10x   = tp2_pct * USER_LEV if tp2 else 0
+
+            # Матожидание (74% WR из истории — если нет данных используем 60%)
+            personal_wr = result.get("personal_wr") or 0.60
+            ev = personal_wr * gain1_10x - (1 - personal_wr) * risk_10x
+            rr = tp1_pct / sl_pct if sl_pct > 0 else 0
+
+            ev_icon = "✅" if ev > 0 else "⚠️"
+            rr_str  = f"1:{rr:.1f}" if rr > 0 else "—"
+
+            # Ликвидация
+            try:
+                from analysis.leverage import calc_liquidation_price
+                liq = calc_liquidation_price(entry_mid, USER_LEV, direction)
+                liq_str = fp(liq)
+                liq_pct = abs((liq - entry_mid) / entry_mid * 100)
+            except Exception:
+                liq_str = "—"
+                liq_pct = 100 / USER_LEV
+
+            text = (
+                f"{dir_icon} <b>{urgency}ВХОДИТЬ В {dir_label} — {coin.upper()}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"💵 Цена входа: <code>{fp(entry_mid)}</code>\n"
+                f"⚡ Плечо: <b>×{USER_LEV}</b>  |  Скор: {setup_score}/100\n\n"
+                f"🎯 <b>TP1:</b> <code>{fp(tp1)}</code>  "
+                f"(+{tp1_pct:.1f}% → <b>+{gain1_10x:.0f}%</b> к позиции)\n"
             )
-        elif status in ("EVENT_RISK",):
-            when_block = f"\n⚠️ <b>Дождись окончания события перед входом</b>\n"
-        else:
-            when_block = f"\n⏳ <b>Пока нет сигнала</b> — наблюдаем. Score нужно {55-setup_score} баллов до BUY_ZONE.\n"
+            if tp2:
+                text += (
+                    f"🎯 <b>TP2:</b> <code>{fp(tp2)}</code>  "
+                    f"(+{tp2_pct:.1f}% → <b>+{gain2_10x:.0f}%</b> к позиции)\n"
+                )
+            text += (
+                f"🛑 <b>Стоп:</b>  <code>{fp(sl)}</code>  "
+                f"(-{sl_pct:.1f}% → <b>-{risk_10x:.0f}%</b> к позиции)\n"
+                f"💀 <b>Ликвидация:</b> <code>{liq_str}</code>  "
+                f"(-{liq_pct:.1f}%)\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"{ev_icon} <b>Матожидание: {ev:+.0f}%</b>  |  R/R {rr_str}\n"
+                f"<i>При твоей WR {personal_wr*100:.0f}%: "
+                f"прибыль {gain1_10x:.0f}% × {personal_wr*100:.0f}% > "
+                f"убыток {risk_10x:.0f}% × {(1-personal_wr)*100:.0f}%</i>\n\n"
+                f"<i>⚠️ Ставь стоп-лосс СРАЗУ при открытии сделки.\n"
+                f"Это аналитика, не финансовый совет.</i>"
+            )
 
-        # ── Сборка ────────────────────────────────────────────────────────────
-        text = (
-            f"{action_icon} <b>{coin.upper()}: {action}</b>\n"
-            f"<code>[{bar}]</code> {setup_score}/100  |  {price_line}\n"
-            f"<i>{action_desc}</i>\n"
-            f"{plan_block}"
-            f"{lev_block}"
-            f"{when_block}"
-            f"{ind_block}"
-            f"\n<i>⚠️ Аналитика, не торговый совет. Ставь стоп-лосс.</i>"
-        )
+        elif IS_ACTIVE:
+            # Сигнал есть, но план не рассчитался
+            text = (
+                f"{action_icon} <b>{coin.upper()}: {action}</b>\n\n"
+                f"Скор: {setup_score}/100\n"
+                f"Плечо ×{USER_LEV}: дождись чёткого уровня входа\n\n"
+                f"<i>Используй /signal {coin.upper()} через 5 минут</i>"
+            )
+
+        else:
+            # НЕТ СИГНАЛА — короткое сообщение
+            if trend == "bearish":
+                note = "📉 Нисходящий тренд — сейчас не входить в лонг"
+            elif setup_score >= 40:
+                note = f"⏳ Почти сигнал (скор {setup_score}/100) — жди подтверждения"
+            else:
+                note = f"😴 Нет чёткого входа (скор {setup_score}/100)"
+
+            text = (
+                f"⚪ <b>{coin.upper()}</b> — нет сигнала\n\n"
+                f"{note}\n\n"
+                f"<i>Буду следить. Как появится вход — пришлю алерт.</i>"
+            )
 
         try:
             save_signal(
