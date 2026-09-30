@@ -16,15 +16,15 @@ jobs:
         with:
           host:     ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
-          key:      ${{ secrets.VPS_SSH_KEY }}
+          password: ${{ secrets.VPS_PASSWORD }}
           port:     22
-          timeout:  30s
+          timeout:  60s
           script: |
             set -e
             cd /opt/sokratanti
             git pull origin main
-            pip install -r requirements.txt -q 2>/dev/null || true
+            /opt/sokratanti/venv/bin/pip install -r requirements.txt -q 2>/dev/null || true
             systemctl restart sokratanti
-            sleep 3
+            sleep 5
             systemctl is-active sokratanti && echo "OK: bot is running" || echo "ERROR: bot failed to start"
             journalctl -u sokratanti -n 5 --no-pager 2>/dev/null || true
