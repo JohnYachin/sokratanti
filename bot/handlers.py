@@ -296,6 +296,28 @@ async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if v >= 1:    return f"${v:,.2f}"
             return f"${v:.5f}"
 
+        # ── Таймфреймы 1h / 4h / 1d ──────────────────────────────────────────
+        ind       = result.get("indicators", {})
+        rsi_1d    = ind.get("rsi")
+        rsi_4h    = ind.get("rsi_4h")
+        rsi_1h    = ind.get("rsi_1h")
+
+        def _tf_line(label, rsi_val, trend_val=None):
+            if rsi_val is None: return ""
+            if rsi_val <= 35:   mood = "📉 перепродан"
+            elif rsi_val <= 45: mood = "🔽 слабость"
+            elif rsi_val <= 55: mood = "➡️ нейтрально"
+            elif rsi_val <= 65: mood = "🔼 сила"
+            else:               mood = "📈 перекуплен"
+            return f"  {label}: RSI <code>{rsi_val:.0f}</code> — {mood}\n"
+
+        tf_block = (
+            f"\n📊 <b>Таймфреймы:</b>\n"
+            f"{_tf_line('1h ', rsi_1h)}"
+            f"{_tf_line('4h ', rsi_4h)}"
+            f"{_tf_line('1d ', rsi_1d)}"
+        ) if any(v is not None for v in [rsi_1h, rsi_4h, rsi_1d]) else ""
+
         # ── СИЛЬНЫЙ СИГНАЛ ────────────────────────────────────────────────────
         IS_STRONG  = status in ("STRONG_SETUP", "BUY_ZONE") and setup_score >= 55
         IS_SHORT   = status in ("STRONG_SHORT", "SHORT_ZONE") and short_score >= 55
@@ -313,12 +335,12 @@ async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # % от цены (без плеча)
             if IS_SHORT:
-                sl_pct   = (sl - entry_mid) / entry_mid * 100   # SL выше цены
-                tp1_pct  = (entry_mid - tp1) / entry_mid * 100  # TP ниже цены
+                sl_pct   = (sl - entry_mid) / entry_mid * 100
+                tp1_pct  = (entry_mid - tp1) / entry_mid * 100
                 tp2_pct  = (entry_mid - tp2) / entry_mid * 100 if tp2 else 0
             else:
-                sl_pct   = (entry_mid - sl) / entry_mid * 100   # SL ниже цены
-                tp1_pct  = (tp1 - entry_mid) / entry_mid * 100  # TP выше цены
+                sl_pct   = (entry_mid - sl) / entry_mid * 100
+                tp1_pct  = (tp1 - entry_mid) / entry_mid * 100
                 tp2_pct  = (tp2 - entry_mid) / entry_mid * 100 if tp2 else 0
 
             # x10 расчёт
@@ -326,13 +348,11 @@ async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
             gain1_10x   = tp1_pct * USER_LEV
             gain2_10x   = tp2_pct * USER_LEV if tp2 else 0
 
-            # Матожидание (74% WR из истории — если нет данных используем 60%)
             personal_wr = result.get("personal_wr") or 0.60
-            ev = personal_wr * gain1_10x - (1 - personal_wr) * risk_10x
-            rr = tp1_pct / sl_pct if sl_pct > 0 else 0
-
-            ev_icon = "✅" if ev > 0 else "⚠️"
-            rr_str  = f"1:{rr:.1f}" if rr > 0 else "—"
+            ev  = personal_wr * gain1_10x - (1 - personal_wr) * risk_10x
+            rr  = tp1_pct / sl_pct if sl_pct > 0 else 0
+            ev_icon  = "✅" if ev > 0 else "⚠️"
+            rr_str   = f"1:{rr:.1f}" if rr > 0 else "—"
 
             # Ликвидация
             try:
@@ -344,53 +364,60 @@ async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 liq_str = "—"
                 liq_pct = 100 / USER_LEV
 
+            import datetime as _dt
+            now_str = _dt.datetime.utcnow().strftime("%H:%M UTC")
+
             text = (
                 f"{dir_icon} <b>{urgency}ВХОДИТЬ В {dir_label} — {coin.upper()}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"💵 Цена входа: <code>{fp(entry_mid)}</code>\n"
+                f"💵 <b>Сейчас на Binance Futures:</b> <code>{price_line.split(chr(10))[0].split('</code>')[0].split('<code>')[-1] if '<code>' in price_line else fp(cur_price)}</code>  {now_str}\n"
+                f"<i>⏱ Цена меняется каждую секунду — это нормально</i>\n"
+                f"{tf_block}\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"📍 <b>Зона входа:</b> <code>{fp(plan.entry_low)} — {fp(plan.entry_high)}</code>\n"
                 f"⚡ Плечо: <b>×{USER_LEV}</b>  |  Скор: {setup_score}/100\n\n"
                 f"🎯 <b>TP1:</b> <code>{fp(tp1)}</code>  "
-                f"(+{tp1_pct:.1f}% → <b>+{gain1_10x:.0f}%</b> к позиции)\n"
+                f"(+{tp1_pct:.1f}% → <b>+{gain1_10x:.0f}%</b>)\n"
             )
             if tp2:
                 text += (
                     f"🎯 <b>TP2:</b> <code>{fp(tp2)}</code>  "
-                    f"(+{tp2_pct:.1f}% → <b>+{gain2_10x:.0f}%</b> к позиции)\n"
+                    f"(+{tp2_pct:.1f}% → <b>+{gain2_10x:.0f}%</b>)\n"
                 )
             text += (
-                f"🛑 <b>Стоп:</b>  <code>{fp(sl)}</code>  "
-                f"(-{sl_pct:.1f}% → <b>-{risk_10x:.0f}%</b> к позиции)\n"
-                f"💀 <b>Ликвидация:</b> <code>{liq_str}</code>  "
-                f"(-{liq_pct:.1f}%)\n\n"
+                f"🛑 <b>Стоп:</b> <code>{fp(sl)}</code>  "
+                f"(-{sl_pct:.1f}% → <b>-{risk_10x:.0f}%</b>)\n"
+                f"💀 <b>Ликвидация:</b> <code>{liq_str}</code>  (-{liq_pct:.1f}%)\n\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"{ev_icon} <b>Матожидание: {ev:+.0f}%</b>  |  R/R {rr_str}\n"
-                f"<i>При твоей WR {personal_wr*100:.0f}%: "
-                f"прибыль {gain1_10x:.0f}% × {personal_wr*100:.0f}% > "
-                f"убыток {risk_10x:.0f}% × {(1-personal_wr)*100:.0f}%</i>\n\n"
-                f"<i>⚠️ Ставь стоп-лосс СРАЗУ при открытии сделки.\n"
-                f"Это аналитика, не финансовый совет.</i>"
+                f"{ev_icon} <b>Матожидание: {ev:+.0f}%</b>  |  R/R {rr_str}\n\n"
+                f"<i>⚠️ Ставь стоп-лосс СРАЗУ при открытии.</i>"
             )
 
         elif IS_ACTIVE:
-            # Сигнал есть, но план не рассчитался
+            import datetime as _dt
+            now_str = _dt.datetime.utcnow().strftime("%H:%M UTC")
             text = (
                 f"{action_icon} <b>{coin.upper()}: {action}</b>\n\n"
-                f"Скор: {setup_score}/100\n"
-                f"Плечо ×{USER_LEV}: дождись чёткого уровня входа\n\n"
+                f"💵 Сейчас: <code>{fp(cur_price)}</code>  {now_str}\n"
+                f"{tf_block}\n"
+                f"Скор: {setup_score}/100 — дождись чёткого уровня входа\n\n"
                 f"<i>Используй /signal {coin.upper()} через 5 минут</i>"
             )
 
         else:
-            # НЕТ СИГНАЛА — короткое сообщение
+            import datetime as _dt
+            now_str = _dt.datetime.utcnow().strftime("%H:%M UTC")
             if trend == "bearish":
-                note = "📉 Нисходящий тренд — сейчас не входить в лонг"
+                note = "📉 Нисходящий тренд — в лонг не входить"
             elif setup_score >= 40:
                 note = f"⏳ Почти сигнал (скор {setup_score}/100) — жди подтверждения"
             else:
                 note = f"😴 Нет чёткого входа (скор {setup_score}/100)"
 
             text = (
-                f"⚪ <b>{coin.upper()}</b> — нет сигнала\n\n"
+                f"⚪ <b>{coin.upper()}</b> — нет сигнала  <i>{now_str}</i>\n\n"
+                f"💵 Сейчас: <code>{fp(cur_price)}</code>\n"
+                f"{tf_block}\n"
                 f"{note}\n\n"
                 f"<i>Буду следить. Как появится вход — пришлю алерт.</i>"
             )
