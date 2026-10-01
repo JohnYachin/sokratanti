@@ -16,59 +16,51 @@ from telegram.constants import ParseMode
 
 logger = logging.getLogger(__name__)
 
-# Только 6 главных монет — BTC, ETH, BNB, SOL, DOGE, TON
-# Меньше запросов, точнее данные, нет ошибок по малоликвидным монетам
+# 5 монет: BTC, ETH, BNB, SOL, DOGE — TON убрали (нет на Binance Futures)
 TRACKED_COINS = [
-    "btc", "eth", "bnb", "sol", "doge", "ton",
+    "btc", "eth", "bnb", "sol", "doge",
 ]
 
-# Статусы, по которым шлём алерт
+# Только сильные сигналы — шлём алерт
 ALERT_STATUSES = {"STRONG_SETUP", "BUY_ZONE", "EVENT_RISK"}
+# Минимальный скор для оповещения (ниже — молчим)
+ALERT_MIN_SCORE = 65
 # Cooldown между алертами одной монеты (секунды)
 ALERT_COOLDOWN = 4 * 3600  # 4 часа
 
 
 def schedule_jobs(app: Application):
-    """Регистрирует расписание авто-отчётов и алертов."""
+    """Регистрирует расписание алертов.
+    
+    Принцип: МОЛЧАТЬ пока нет сигнала.
+    Единственные автоматические сообщения:
+      1. Сигнал входа (скор ≥ 65) — проверяется каждые 2 часа
+      2. Алерт по открытой позиции (TP/SL) — каждые 10 минут
+    """
     user_id_str = os.getenv("TELEGRAM_USER_ID")
     if not user_id_str:
         logger.warning("TELEGRAM_USER_ID не задан — авто-задачи отключены.")
         return
 
     user_id = int(user_id_str)
-    interval_hours = float(os.getenv("REPORT_INTERVAL_HOURS", "4"))
 
-    app.job_queue.run_repeating(
-        _send_market_report,
-        interval=interval_hours * 3600,
-        first=60,
-        data={"user_id": user_id},
-        name="market_report",
-    )
+    # ── Проверка сигналов каждые 2 часа — сообщение ТОЛЬКО если есть вход ──
     app.job_queue.run_repeating(
         _check_signal_alerts,
-        interval=1800,   # каждые 30 минут
-        first=90,
+        interval=7200,   # каждые 2 часа
+        first=120,
         data={"user_id": user_id},
         name="signal_alerts",
     )
-    # Обзор возможностей каждые 30 минут — все монеты с точками входа
-    app.job_queue.run_repeating(
-        _send_opportunities_report,
-        interval=1800,   # каждые 30 минут
-        first=30,
-        data={"user_id": user_id},
-        name="opportunities_report",
-    )
-    # 🔑 Мониторинг ОТКРЫТЫХ позиций каждые 10 минут — TP/SL алерты
+    # ── Мониторинг открытых позиций (TP/SL/ликвидация) — каждые 10 минут ──
     app.job_queue.run_repeating(
         _monitor_open_positions,
-        interval=600,    # каждые 10 минут
+        interval=600,
         first=15,
         data={"user_id": user_id},
         name="position_monitor",
     )
-    # Трекинг результатов каждый час
+    # ── Трекинг результатов (внутренний, без уведомлений) — каждый час ──
     app.job_queue.run_repeating(
         _check_signal_outcomes,
         interval=3600,
@@ -76,15 +68,7 @@ def schedule_jobs(app: Application):
         data={"user_id": user_id},
         name="signal_outcomes",
     )
-    # Персональный алерт каждые 2 часа — совпадение с личной стратегией
-    app.job_queue.run_repeating(
-        _check_personal_strategy_alert,
-        interval=7200,   # каждые 2 часа
-        first=120,
-        data={"user_id": user_id},
-        name="personal_alert",
-    )
-    # Еженедельная авто-оптимизация (воскресенье 03:00 UTC)
+    # ── Авто-оптимизация весов — воскресенье 03:00 UTC ──
     import datetime as _dt
     app.job_queue.run_daily(
         _weekly_optimize,
@@ -94,9 +78,9 @@ def schedule_jobs(app: Application):
         name="weekly_optimize",
     )
     logger.info(
-        "Запланирован авто-отчёт каждые %.1f ч., сигналы каждые 30 мин, "
-        "мониторинг позиций каждые 10 мин, оптимизация по воскресеньям.",
-        interval_hours,
+        "Scheduler: сигналы каждые 2ч (только при скоре ≥%d), "
+        "мониторинг позиций каждые 10 мин.",
+        ALERT_MIN_SCORE,
     )
 
 
@@ -316,13 +300,13 @@ def _trend_emoji(trend: str) -> str:
 # ── Алерты (из БД, не из RAM) ───────────────────────────────────────────────
 async def _check_signal_alerts(context):
     """
-    Каждые 30 минут проверяет сигналы по всем монетам.
-    Алерт отправляется только при:
-      1. Статус попал в ALERT_STATUSES
-      2. Этот статус не был отправлен за последние ALERT_COOLDOWN секунд
-    Состояние хранится в БД — переживает рестарты.
+    Каждые 2 часа проверяет сигналы по 5 монетам.
+    Сообщение отправляется ТОЛЬКО если:
+      1. Статус в ALERT_STATUSES
+      2. setup_score ≥ ALERT_MIN_SCORE (≥ 65)
+      3. Не было алерта по этой монете за последние ALERT_COOLDOWN секунд
+    Если сигналов нет — ТИШИНА.
     """
-    from data.coingecko import get_price
     from analysis.signals import generate_signal
     from analysis.leverage import recommend_leverage, format_trade_signal
     from db.database import alert_already_sent, record_alert, signal_trade_open
@@ -332,9 +316,16 @@ async def _check_signal_alerts(context):
     for coin in TRACKED_COINS:
         try:
             result = await asyncio.to_thread(generate_signal, coin)
-            status = result.get("status", "NO_EDGE")
+            status      = result.get("status", "NO_EDGE")
+            setup_score = result.get("setup_score", 0)
+            short_score = result.get("short_score", 0)
+            best_score  = max(setup_score, short_score)
 
+            # Молчим если нет сильного сигнала
             if status not in ALERT_STATUSES:
+                continue
+            if best_score < ALERT_MIN_SCORE:
+                logger.debug("Сигнал %s скор %d < %d — молчим", coin, best_score, ALERT_MIN_SCORE)
                 continue
 
             from datetime import datetime, timezone
