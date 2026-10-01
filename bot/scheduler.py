@@ -16,20 +16,16 @@ from telegram.constants import ParseMode
 
 logger = logging.getLogger(__name__)
 
-# Монеты с поддержкой Binance USDT-M Futures (fapi.binance.com)
-# Основные 10 по капитализации + трейдинговой ликвидности
+# Только 6 главных монет — BTC, ETH, BNB, SOL, DOGE, TON
+# Меньше запросов, точнее данные, нет ошибок по малоликвидным монетам
 TRACKED_COINS = [
-    "btc", "eth", "bnb", "sol", "xrp",
-    "doge", "ada", "avax", "link", "dot",
-    # Дополнительные — все есть на Binance Futures
-    "ltc", "atom", "near", "uni", "trx",
-    "bch", "aave", "apt", "arb", "op",
+    "btc", "eth", "bnb", "sol", "doge", "ton",
 ]
 
 # Статусы, по которым шлём алерт
 ALERT_STATUSES = {"STRONG_SETUP", "BUY_ZONE", "EVENT_RISK"}
 # Cooldown между алертами одной монеты (секунды)
-ALERT_COOLDOWN = 2 * 3600  # 2 часа
+ALERT_COOLDOWN = 4 * 3600  # 4 часа
 
 
 def schedule_jobs(app: Application):

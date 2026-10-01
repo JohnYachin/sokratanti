@@ -370,8 +370,8 @@ async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = (
                 f"{dir_icon} <b>{urgency}ВХОДИТЬ В {dir_label} — {coin.upper()}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"💵 <b>Сейчас на Binance Futures:</b> <code>{price_line.split(chr(10))[0].split('</code>')[0].split('<code>')[-1] if '<code>' in price_line else fp(cur_price)}</code>  {now_str}\n"
-                f"<i>⏱ Цена меняется каждую секунду — это нормально</i>\n"
+                f"💵 <b>Binance Futures:</b> <code>{fp(cur_price)}</code>  {now_str}\n"
+                f"<i>⏱ Цена меняется каждую секунду</i>\n"
                 f"{tf_block}\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"📍 <b>Зона входа:</b> <code>{fp(plan.entry_low)} — {fp(plan.entry_high)}</code>\n"

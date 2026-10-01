@@ -63,7 +63,7 @@ RSS_SOURCES: list[dict] = [
 
 # Простой in-memory кеш: {source_url: (fetched_at, items)}
 _cache: dict[str, tuple[float, list[NewsItem]]] = {}
-CACHE_TTL = 300  # 5 минут
+CACHE_TTL = 1800  # 30 минут (было 5 — слишком часто)
 
 
 def _parse_date(date_str: str | None) -> datetime:
@@ -101,9 +101,23 @@ def _fetch_rss(source: dict, timeout: int = 8) -> list[NewsItem]:
 
     try:
         root = ET.fromstring(resp.content)
-    except ET.ParseError as e:
-        logger.warning("RSS parse error [%s]: %s", name, e)
-        return []
+    except ET.ParseError:
+        # Пробуем lxml с режимом восстановления (обрабатывает сломанный HTML/XML)
+        try:
+            from lxml import etree as lxml_et
+            parser = lxml_et.XMLParser(recover=True, encoding="utf-8")
+            lxml_root = lxml_et.fromstring(resp.content, parser=parser)
+            # Конвертируем обратно в ET для дальнейшей обработки
+            root = ET.fromstring(lxml_et.tostring(lxml_root, encoding="unicode").encode("utf-8"))
+        except Exception:
+            # lxml недоступен или тоже не смог — пробуем с очисткой
+            try:
+                import re as _re
+                clean = _re.sub(r'&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)', '&amp;', resp.text)
+                root = ET.fromstring(clean.encode("utf-8"))
+            except Exception as e2:
+                logger.debug("RSS parse skip [%s]: %s", name, e2)
+                return []
 
     items: list[NewsItem] = []
 
