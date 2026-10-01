@@ -252,34 +252,28 @@ async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ind    = result["indicators"]
         plan   = result.get("trading_plan")
 
-        # ── Цена — Binance FUTURES (Mark Price) ──────────────────────────────
+        # ── Цена — Binance FUTURES (Last Price = то что видишь на бирже) ─────
         futures_ticker = None
-        funding_data   = None
         try:
             from market_data.binance_futures import get_futures_ticker, get_funding_rate
             futures_ticker = await asyncio.to_thread(get_futures_ticker, coin)
-            funding_data   = await asyncio.to_thread(get_funding_rate, coin)
             mark_p  = futures_ticker["mark_price"]
             last_p  = futures_ticker["last_price"]
             ch      = futures_ticker["price_change_pct"]
             fr_pct  = futures_ticker["last_funding_rate_pct"]
-            cur_price = mark_p if mark_p > 0 else last_p
+            # Last Price — именно то что видишь на Binance Futures
+            cur_price = last_p if last_p > 0 else mark_p
             fr_icon = "🔴" if fr_pct > 0.05 else ("🟢" if fr_pct < -0.02 else "⚪")
+            diff_pct = abs(mark_p - last_p) / last_p * 100 if last_p > 0 else 0
             price_line = (
-                f"📊 <b>Futures Mark:</b> <code>${mark_p:,.4f}</code>  "
+                f"💵 <b>Цена (Last):</b> <code>${last_p:,.4f}</code>  "
                 f"{'📈' if ch>=0 else '📉'}{ch:+.2f}%\n"
-                f"   Last Price: <code>${last_p:,.4f}</code>  "
+                f"   Mark Price: <code>${mark_p:,.4f}</code>  "
                 f"{fr_icon} Фандинг: <code>{fr_pct:+.4f}%</code>"
             )
         except Exception:
-            try:
-                pd_ = await asyncio.to_thread(get_price, coin)
-                cur_price = pd_["price_usd"]
-                ch = pd_.get("change_24h", 0.0)
-                price_line = f"💵 <code>${cur_price:,.4f}</code>  {'📈' if ch>=0 else '📉'}{ch:+.1f}%"
-            except Exception:
-                cur_price = ind.get("price", 0)
-                price_line = f"💵 <code>${cur_price:,.4f}</code>"
+            cur_price = result.get("indicators", {}).get("price", 0)
+            price_line = f"💵 <code>${cur_price:,.4f}</code>"
 
         # ── Форматирование цены ───────────────────────────────────────────────
         def fp(v):

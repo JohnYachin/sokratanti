@@ -193,20 +193,7 @@ async def _send_opportunities_report(context):
         f"🟢 LONG: <b>{len(longs)}</b>  🔴 SHORT: <b>{len(shorts)}</b>  из 30 монет\n"
     ]
 
-    # ── AI комментарий от Perplexity ─────────────────────────────────────
-    if longs or shorts:
-        try:
-            from data.perplexity import get_market_analysis
-            top_coins = [o["coin"] for o in (longs + shorts)[:3]]
-            coins_str = ", ".join(top_coins)
-            ai_resp = await asyncio.to_thread(
-                get_market_analysis, coins_str
-            )
-            if ai_resp.get("analysis"):
-                ai_text = ai_resp["analysis"].strip()[:350]
-                lines.append(f"\n🤖 <b>AI (Perplexity):</b>\n<i>{ai_text}</i>\n")
-        except Exception as e:
-            logger.debug("Perplexity AI skip: %s", e)
+    # Perplexity убран — используем только Binance + RSS новости
 
     # ── LONG блок ────────────────────────────────────────────────────────
     if longs:

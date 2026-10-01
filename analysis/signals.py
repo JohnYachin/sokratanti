@@ -52,14 +52,10 @@ def _get_ohlcv(coin: str, interval: str = "1d", limit: int = 200):
     except Exception as e:
         logger.warning("Spot klines %s %s: %s", coin, interval, e)
 
-    # ── Приоритет 3: CoinGecko (только 1d) ───────────────────────────────────
-    if interval == "1d":
-        try:
-            from data.coingecko import get_ohlcv
-            return get_ohlcv(coin, days=90)
-        except Exception as e:
-            logger.error("CoinGecko fallback: %s", e)
-    return None
+    # CoinGecko убран — только Binance данные
+    logger.warning("Нет данных OHLCV для %s %s — Binance недоступен", coin, interval)
+    import pandas as pd
+    return pd.DataFrame()
 
 
 def _get_news_score(coin: str) -> tuple[float, str, bool]:
