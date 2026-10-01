@@ -6,12 +6,17 @@ data/cryptopanic.py — Новости через CryptoPanic API (Growth Weekly
 бот работает корректно — производится graceful degradation через RSS.
 """
 import os
+import time
 import logging
 import requests
 
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://cryptopanic.com/api/growth_weekly/v2"
+
+# Кэш 2 часа — не долбим API каждые 30 минут за 20 монет
+_CACHE: dict[str, tuple[float, list]] = {}  # coin → (timestamp, data)
+_CACHE_TTL = 7200  # 2 часа
 
 COIN_CURRENCIES: dict[str, str] = {
     "btc": "BTC", "bitcoin": "BTC",
@@ -41,6 +46,12 @@ def get_news(coin: str, limit: int = 15) -> list[dict]:
     Каждый элемент содержит: title, url, published,
     votes_positive, votes_negative, panic_score.
     """
+    cache_key = f"news:{coin.lower()}"
+    if cache_key in _CACHE:
+        ts, data = _CACHE[cache_key]
+        if time.time() - ts < _CACHE_TTL:
+            return data
+
     key = _api_key()
     if not key:
         logger.warning("CRYPTOPANIC_API_KEY не задан.")
@@ -59,12 +70,17 @@ def get_news(coin: str, limit: int = 15) -> list[dict]:
             },
             timeout=10,
         )
+        if r.status_code == 429:
+            logger.warning("CryptoPanic 429 — rate limit, используем кэш или пропускаем")
+            return _CACHE.get(cache_key, (0, []))[1]
         if r.status_code == 403:
             logger.warning("CryptoPanic 403 — проверь ключ или лимиты.")
             return _newsapi_fallback(coin, limit)
         r.raise_for_status()
         results = r.json().get("results", [])
-        return [_parse_item(item) for item in results[:limit]]
+        data = [_parse_item(item) for item in results[:limit]]
+        _CACHE[cache_key] = (time.time(), data)
+        return data
     except Exception as e:
         logger.error("CryptoPanic error: %s", e)
         return _newsapi_fallback(coin, limit)

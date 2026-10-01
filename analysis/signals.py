@@ -640,21 +640,24 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
     old_score = rsi_score + macd_score + bb_score + fg_score
     signal = "BUY" if old_score >= 2 else ("SELL" if old_score <= -2 else "HOLD")
 
-    # ── Торговый план LONG или SHORT ─────────────────────────────────────
+    # ── Торговый план LONG — на 4h данных (ближе к реальным уровням) ─────
     trading_plan = None
     short_plan   = None
+    _plan_df = df_4h if (df_4h is not None and not df_4h.empty) else df_1d
+    _plan_ind = ind_4h if ind_4h else ind_1d
+
     if status in ("BUY_ZONE", "STRONG_SETUP", "WATCH"):
         try:
             from analysis.levels import find_swing_points, find_key_levels
             from analysis.risk import calculate_trading_plan
 
-            price = ind_1d.get("price", float(df_1d["close"].iloc[-1]))
-            swing = find_swing_points(df_1d)
-            supports, resistances = find_key_levels(df_1d)
+            price    = _plan_ind.get("price") or float(_plan_df["close"].iloc[-1])
+            swing    = find_swing_points(_plan_df)
+            supports, resistances = find_key_levels(_plan_df)
 
             trading_plan = calculate_trading_plan(
                 price=price,
-                indicators=ind_1d,
+                indicators=_plan_ind,
                 supports=supports,
                 resistances=resistances,
                 swing_low=swing.recent_low,
@@ -662,24 +665,57 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
         except Exception as e:
             logger.error("Trading plan (LONG) error для %s: %s", coin, e)
 
+        # ATR fallback — если swing points не нашлись, считаем от ATR
+        if trading_plan is None or not trading_plan.setup_valid:
+            try:
+                from analysis.risk import calculate_trading_plan
+                price = _plan_ind.get("price") or float(_plan_df["close"].iloc[-1])
+                atr   = _plan_ind.get("atr") or price * 0.015  # 1.5% если нет ATR
+                # Уровни от текущей цены через ATR
+                trading_plan = calculate_trading_plan(
+                    price=price,
+                    indicators=_plan_ind,
+                    supports=[price - 1.5 * atr, price - 3 * atr],
+                    resistances=[price + 2 * atr, price + 4 * atr],
+                    swing_low=price - 2 * atr,
+                )
+            except Exception as e2:
+                logger.error("ATR fallback plan error для %s: %s", coin, e2)
+
     if status in ("SHORT_ZONE", "STRONG_SHORT"):
         try:
             from analysis.levels import find_swing_points, find_key_levels
             from analysis.risk import calculate_short_plan
 
-            price = ind_1d.get("price", float(df_1d["close"].iloc[-1]))
-            swing = find_swing_points(df_1d)
-            supports, resistances = find_key_levels(df_1d)
+            price    = _plan_ind.get("price") or float(_plan_df["close"].iloc[-1])
+            swing    = find_swing_points(_plan_df)
+            supports, resistances = find_key_levels(_plan_df)
 
             short_plan = calculate_short_plan(
                 price=price,
-                indicators=ind_1d,
+                indicators=_plan_ind,
                 supports=supports,
                 resistances=resistances,
                 swing_high=swing.recent_high,
             )
         except Exception as e:
             logger.error("Short plan error для %s: %s", coin, e)
+
+        # ATR fallback для шорта
+        if short_plan is None or not short_plan.setup_valid:
+            try:
+                from analysis.risk import calculate_short_plan
+                price = _plan_ind.get("price") or float(_plan_df["close"].iloc[-1])
+                atr   = _plan_ind.get("atr") or price * 0.015
+                short_plan = calculate_short_plan(
+                    price=price,
+                    indicators=_plan_ind,
+                    supports=[price - 2 * atr, price - 4 * atr],
+                    resistances=[price + 1.5 * atr, price + 3 * atr],
+                    swing_high=price + 2 * atr,
+                )
+            except Exception as e2:
+                logger.error("ATR fallback short plan error для %s: %s", coin, e2)
 
     # ── AI Sentiment (опционально) ───────────────────────────────────────────
     sentiment_score = 0.0
