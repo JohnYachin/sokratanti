@@ -48,12 +48,18 @@ COIN_TO_SYMBOL: dict[str, str] = {
     "avax": "AVAXUSDT", "avalanche-2":"AVAXUSDT",
     "link": "LINKUSDT", "chainlink":  "LINKUSDT",
     "dot":  "DOTUSDT",  "polkadot":   "DOTUSDT",
+    "ton":  "TONUSDT",  "toncoin":    "TONUSDT",  # TON — только Spot!
 }
 
+# Монеты не доступные на Futures — используем Binance Spot
+SPOT_ONLY_COINS: set[str] = {"ton", "toncoin"}
+
 CACHE_TTL: dict[str, int] = {
-    "1h": 60,      # 1 минута
-    "4h": 240,     # 4 минуты
-    "1d": 900,     # 15 минут
+    "5m":  30,     # 30 секунд
+    "30m": 120,    # 2 минуты
+    "1h":  60,     # 1 минута
+    "4h":  240,    # 4 минуты
+    "1d":  900,    # 15 минут
 }
 
 # Кеш свечей
@@ -97,6 +103,18 @@ def get_klines(
         fetched_at, df = _klines_cache[cache_key]
         if time.time() - fetched_at < CACHE_TTL[interval]:
             return df
+
+    # TON и другие SPOT_ONLY монеты — сразу используем Spot API
+    if coin.lower() in SPOT_ONLY_COINS:
+        try:
+            from market_data.binance_rest import get_klines as spot_klines
+            df = spot_klines(coin, interval=interval, limit=limit, use_cache=False)
+            if not df.empty:
+                _klines_cache[cache_key] = (time.time(), df)
+            return df
+        except Exception as e:
+            logger.error("TON spot klines error: %s", e)
+            return _empty_df()
 
     df = _fetch_futures_klines(symbol, interval, limit)
 

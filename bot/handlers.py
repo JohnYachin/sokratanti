@@ -296,27 +296,35 @@ async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if v >= 1:    return f"${v:,.2f}"
             return f"${v:.5f}"
 
-        # ── Таймфреймы 1h / 4h / 1d ──────────────────────────────────────────
+        # ── Таймфреймы 5m / 30m / 1h / 4h / 1d ─────────────────────────────────
         ind       = result.get("indicators", {})
         rsi_1d    = ind.get("rsi")
         rsi_4h    = ind.get("rsi_4h")
         rsi_1h    = ind.get("rsi_1h")
+        rsi_30m   = ind.get("rsi_30m")
+        rsi_5m    = ind.get("rsi_5m")
 
-        def _tf_line(label, rsi_val, trend_val=None):
+        def _tf_line(label, rsi_val):
             if rsi_val is None: return ""
-            if rsi_val <= 35:   mood = "📉 перепродан"
-            elif rsi_val <= 45: mood = "🔽 слабость"
-            elif rsi_val <= 55: mood = "➡️ нейтрально"
-            elif rsi_val <= 65: mood = "🔼 сила"
+            if rsi_val <= 30:   mood = "📉 сильно перепродан"
+            elif rsi_val <= 42: mood = "🔽 слабость"
+            elif rsi_val <= 58: mood = "➡️ нейтрально"
+            elif rsi_val <= 70: mood = "🔼 сила"
             else:               mood = "📈 перекуплен"
             return f"  {label}: RSI <code>{rsi_val:.0f}</code> — {mood}\n"
 
-        tf_block = (
-            f"\n📊 <b>Таймфреймы:</b>\n"
-            f"{_tf_line('1h ', rsi_1h)}"
-            f"{_tf_line('4h ', rsi_4h)}"
-            f"{_tf_line('1d ', rsi_1d)}"
-        ) if any(v is not None for v in [rsi_1h, rsi_4h, rsi_1d]) else ""
+        tf_vals = [rsi_5m, rsi_30m, rsi_1h, rsi_4h, rsi_1d]
+        if any(v is not None for v in tf_vals):
+            tf_block = (
+                f"\n📊 <b>Таймфреймы:</b>\n"
+                f"{_tf_line('5m  (скальп)', rsi_5m)}"
+                f"{_tf_line('30m (тайминг)', rsi_30m)}"
+                f"{_tf_line('1h  (вход)   ', rsi_1h)}"
+                f"{_tf_line('4h  (тренд)  ', rsi_4h)}"
+                f"{_tf_line('1d  (общий)  ', rsi_1d)}"
+            )
+        else:
+            tf_block = ""
 
         # ── СИЛЬНЫЙ СИГНАЛ ────────────────────────────────────────────────────
         IS_STRONG  = status in ("STRONG_SETUP", "BUY_ZONE") and setup_score >= 55

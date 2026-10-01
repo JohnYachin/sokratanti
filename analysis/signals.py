@@ -334,6 +334,22 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
     if df_1h is not None and not df_1h.empty:
         ind_1h = calculate_indicators(df_1h)
 
+    # ── 30m и 5m данные (краткосрочный тайминг / скальпинг) ──────────────────
+    ind_30m: dict = {}
+    ind_5m:  dict = {}
+    try:
+        df_30m = _get_ohlcv(coin, interval="30m", limit=80)
+        if df_30m is not None and not df_30m.empty:
+            ind_30m = calculate_indicators(df_30m)
+    except Exception as e:
+        logger.debug("30m data error for %s: %s", coin, e)
+    try:
+        df_5m = _get_ohlcv(coin, interval="5m", limit=60)
+        if df_5m is not None and not df_5m.empty:
+            ind_5m = calculate_indicators(df_5m)
+    except Exception as e:
+        logger.debug("5m data error for %s: %s", coin, e)
+
     # ── Тренд по EMA (определяем первым — нужен для RSI-интерпретации) ────────
     trend = get_trend_direction(ind_1d)
     trend_labels = {"bullish": "🟢 восходящий", "bearish": "🔴 нисходящий",
@@ -726,6 +742,10 @@ def generate_signal(coin: str, include_sentiment: bool = False) -> dict:
     if ind_1h:
         indicators_combined["rsi_1h"]      = ind_1h.get("rsi")
         indicators_combined["macd_diff_1h"] = ind_1h.get("macd_diff")
+    if ind_30m:
+        indicators_combined["rsi_30m"]     = ind_30m.get("rsi")
+    if ind_5m:
+        indicators_combined["rsi_5m"]      = ind_5m.get("rsi")
 
     return {
         "signal":        signal,

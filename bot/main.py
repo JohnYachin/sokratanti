@@ -104,6 +104,25 @@ def main():
     # Полный отчёт (история + рынок сейчас)
     app.add_handler(CommandHandler("report", cmd_report))
 
+    # --- Меню команд (кнопка "/" внизу чата) ---
+    async def _set_menu(app):
+        from telegram import BotCommand
+        await app.bot.set_my_commands([
+            BotCommand("signal",    "📊 Сигнал — BTC/ETH/SOL/DOGE/BNB"),
+            BotCommand("account",   "💼 Мой баланс и открытые позиции"),
+            BotCommand("scan",      "🔍 Сканировать все 6 монет"),
+            BotCommand("report",    "📋 Анализ моих сделок"),
+            BotCommand("strategy",  "🎯 Моя торговая стратегия"),
+            BotCommand("myhistory", "📜 История сделок по монете"),
+            BotCommand("feargreed", "😨 Индекс страха и жадности"),
+            BotCommand("news",      "📰 Крипто новости"),
+            BotCommand("price",     "💵 Текущая цена монеты"),
+            BotCommand("help",      "❓ Все команды"),
+        ])
+        logger.info("Bot command menu set.")
+
+    app.post_init = _set_menu
+
     # --- Автоматические отчёты ---
     schedule_jobs(app)
 
