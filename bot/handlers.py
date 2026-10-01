@@ -17,9 +17,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
-from data.coingecko import get_price
 from data.feargreed import get_fear_greed
-from data.perplexity import search_crypto_news, get_market_analysis
 from analysis.signals import generate_signal
 from analysis.sentiment import analyze_sentiment
 from db.database import save_signal, get_history

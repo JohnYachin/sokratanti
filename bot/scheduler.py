@@ -64,6 +64,14 @@ def schedule_jobs(app: Application):
         data={"user_id": user_id},
         name="opportunities_report",
     )
+    # 🔑 Мониторинг ОТКРЫТЫХ позиций каждые 10 минут — TP/SL алерты
+    app.job_queue.run_repeating(
+        _monitor_open_positions,
+        interval=600,    # каждые 10 минут
+        first=15,
+        data={"user_id": user_id},
+        name="position_monitor",
+    )
     # Трекинг результатов каждый час
     app.job_queue.run_repeating(
         _check_signal_outcomes,
@@ -90,7 +98,8 @@ def schedule_jobs(app: Application):
         name="weekly_optimize",
     )
     logger.info(
-        "Запланирован авто-отчёт каждые %.1f ч., алерты каждый час, трекинг каждый час, оптимизация по воскресеньям.",
+        "Запланирован авто-отчёт каждые %.1f ч., сигналы каждые 30 мин, "
+        "мониторинг позиций каждые 10 мин, оптимизация по воскресеньям.",
         interval_hours,
     )
 
@@ -693,3 +702,144 @@ async def _check_personal_strategy_alert(context) -> None:
 
     except Exception as e:
         logger.error("Personal strategy alert error: %s", e)
+
+
+# ── Мониторинг открытых позиций — TP/SL алерты ───────────────────────────────
+# Cooldown: не шлём один и тот же алерт чаще раза в час
+_POSITION_ALERTED: dict[str, tuple[float, str]] = {}  # symbol → (ts, last_alert_type)
+_POSITION_COOLDOWN = 3600  # 1 час
+
+
+async def _monitor_open_positions(context) -> None:
+    """
+    Каждые 10 минут смотрит твои открытые Futures позиции.
+    Шлёт алерт когда:
+      - Прибыль достигла зоны фиксации (TP)
+      - Убыток достиг опасной зоны (SL)
+      - Позиция близко к ликвидации
+    """
+    import time as _time
+    user_id = context.job.data.get("user_id")
+    if not user_id:
+        return
+
+    try:
+        def _fetch():
+            from market_data.binance_account import get_open_positions
+            return get_open_positions()
+
+        positions = await asyncio.to_thread(_fetch)
+
+        if not positions:
+            return  # нет открытых позиций — молчим
+
+        now = _time.time()
+
+        for pos in positions:
+            symbol     = pos["symbol"]
+            coin       = pos["coin"].upper()
+            side       = pos["side"]
+            entry      = pos["entry_price"]
+            mark       = pos["mark_price"]
+            pnl_usdt   = pos["unrealized_pnl"]
+            pnl_pct    = pos["pnl_pct"]       # % от маржи
+            lev        = pos["leverage"]
+            liq        = pos["liq_price"]
+            margin     = pos["margin"]
+
+            # % движения цены (без плеча)
+            price_move_pct = (mark - entry) / entry * 100 if side == "LONG" else (entry - mark) / entry * 100
+
+            # Дистанция до ликвидации
+            liq_dist_pct = abs((mark - liq) / mark * 100) if liq > 0 else 999
+
+            side_icon = "🟢" if side == "LONG" else "🔴"
+
+            def _fmt_price(v):
+                if v >= 1000: return f"${v:,.0f}"
+                if v >= 1:    return f"${v:,.2f}"
+                return f"${v:.5f}"
+
+            # ── Определяем тип алерта ────────────────────────────────────────
+            alert_type = None
+            alert_text = None
+
+            if liq_dist_pct < 5:
+                # ОПАСНОСТЬ — близко к ликвидации
+                alert_type = "liq_danger"
+                alert_text = (
+                    f"🚨 <b>ОПАСНОСТЬ ЛИКВИДАЦИИ — {coin}</b>\n"
+                    f"{'═'*22}\n"
+                    f"{side_icon} Позиция: <b>{side} ×{lev}</b>\n"
+                    f"💵 Вход: <code>{_fmt_price(entry)}</code>  →  Сейчас: <code>{_fmt_price(mark)}</code>\n"
+                    f"💀 Ликвидация: <code>{_fmt_price(liq)}</code>  (осталось <b>{liq_dist_pct:.1f}%</b>)\n"
+                    f"📉 P&L: <b>{pnl_usdt:+.2f}$ ({pnl_pct:+.1f}%)</b>\n\n"
+                    f"⛔ <b>СРОЧНО закрой позицию или добавь маржу!</b>"
+                )
+            elif pnl_pct <= -12:
+                # Большой убыток
+                alert_type = "sl_danger"
+                alert_text = (
+                    f"🔴 <b>СТОП-ЛОСС — {coin}</b>\n"
+                    f"{'─'*22}\n"
+                    f"{side_icon} {side} ×{lev} | Вход: <code>{_fmt_price(entry)}</code>\n"
+                    f"💵 Сейчас: <code>{_fmt_price(mark)}</code>\n"
+                    f"📉 Убыток: <b>{pnl_usdt:+.2f}$ ({pnl_pct:+.1f}%)</b>\n"
+                    f"   Цена пошла: {price_move_pct:+.2f}% не в твою сторону\n\n"
+                    f"💡 Рекомендация: закрой позицию и зафиксируй убыток."
+                )
+            elif pnl_pct <= -7:
+                # Предупреждение — убыток растёт
+                alert_type = "sl_warning"
+                alert_text = (
+                    f"⚠️ <b>Убыток растёт — {coin}</b>\n"
+                    f"{'─'*22}\n"
+                    f"{side_icon} {side} ×{lev} | Вход: <code>{_fmt_price(entry)}</code>\n"
+                    f"💵 Сейчас: <code>{_fmt_price(mark)}</code>\n"
+                    f"📉 P&L: <b>{pnl_usdt:+.2f}$ ({pnl_pct:+.1f}%)</b>\n\n"
+                    f"💡 Следи за позицией. Стоп выставлен?"
+                )
+            elif pnl_pct >= 25:
+                # Отличная прибыль — фиксируй!
+                alert_type = "tp2_reached"
+                alert_text = (
+                    f"🎯🎯 <b>ТЕЙК-ПРОФИТ 2 — {coin}</b>\n"
+                    f"{'═'*22}\n"
+                    f"{side_icon} {side} ×{lev} | Вход: <code>{_fmt_price(entry)}</code>\n"
+                    f"💵 Сейчас: <code>{_fmt_price(mark)}</code>\n"
+                    f"💰 Прибыль: <b>+{pnl_usdt:.2f}$ (+{pnl_pct:.1f}%)</b>\n"
+                    f"   Цена выросла: +{price_move_pct:.2f}%\n\n"
+                    f"✅ <b>Можно закрыть позицию полностью!</b>"
+                )
+            elif pnl_pct >= 13:
+                # Хорошая прибыль — первая цель
+                alert_type = "tp1_reached"
+                alert_text = (
+                    f"🎯 <b>ТЕЙК-ПРОФИТ 1 — {coin}</b>\n"
+                    f"{'─'*22}\n"
+                    f"{side_icon} {side} ×{lev} | Вход: <code>{_fmt_price(entry)}</code>\n"
+                    f"💵 Сейчас: <code>{_fmt_price(mark)}</code>\n"
+                    f"💰 Прибыль: <b>+{pnl_usdt:.2f}$ (+{pnl_pct:.1f}%)</b>\n"
+                    f"   Цена выросла: +{price_move_pct:.2f}%\n\n"
+                    f"💡 Можно зафиксировать часть прибыли. TP2 ещё впереди."
+                )
+
+            if not alert_text:
+                continue
+
+            # Cooldown — не спамим
+            last_ts, last_type = _POSITION_ALERTED.get(symbol, (0, ""))
+            if last_type == alert_type and (now - last_ts) < _POSITION_COOLDOWN:
+                continue
+
+            _POSITION_ALERTED[symbol] = (now, alert_type)
+
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=alert_text,
+                parse_mode=ParseMode.HTML,
+            )
+            logger.info("Position alert [%s] %s %s pnl=%.1f%%", alert_type, coin, side, pnl_pct)
+
+    except Exception as e:
+        logger.error("Position monitor error: %s", e)
