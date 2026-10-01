@@ -37,21 +37,7 @@ def _collect_news(coin: str) -> list[str]:
     except Exception as e:
         logger.warning("RSS collection error: %s", e)
 
-    # 2. CryptoPanic (опционально — если ключ задан)
-    if len(news_lines) < 5:
-        try:
-            from data.cryptopanic import get_news
-            cp_news = get_news(coin, limit=8)
-            for n in cp_news:
-                line = n["title"]
-                if n.get("votes_positive", 0) + n.get("votes_negative", 0) > 0:
-                    line += f" [+{n['votes_positive']}👍 -{n['votes_negative']}👎]"
-                if n.get("panic_score", 0) > 5:
-                    line += f" [panic={n['panic_score']}]"
-                if line not in news_lines:  # базовая дедупликация
-                    news_lines.append(line)
-        except Exception as e:
-            logger.debug("CryptoPanic sentiment skipped: %s", e)
+    # CryptoPanic убран — только RSS
 
     # 3. Reddit (дополнительный, низкий приоритет)
     try:

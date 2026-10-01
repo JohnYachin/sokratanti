@@ -61,7 +61,7 @@ def _get_ohlcv(coin: str, interval: str = "1d", limit: int = 200):
 def _get_news_score(coin: str) -> tuple[float, str, bool]:
     """
     Возвращает (score -1..+1, описание, has_critical_event).
-    RSS → CryptoPanic → нейтрально.
+    Только RSS — без CryptoPanic.
     """
     try:
         from news.rss import get_news_for_coin
@@ -77,16 +77,6 @@ def _get_news_score(coin: str) -> tuple[float, str, bool]:
             return score, note, False
     except Exception as e:
         logger.warning("RSS error: %s", e)
-
-    try:
-        from data.cryptopanic import calc_vote_sentiment
-        cp = calc_vote_sentiment(coin)
-        score = float(cp.get("score", 0.0))
-        if cp.get("bullish_count", 0) + cp.get("bearish_count", 0) > 0:
-            note = f"CryptoPanic: +{cp['bullish_count']}👍 -{cp['bearish_count']}👎"
-            return score, note, False
-    except Exception:
-        pass
 
     return 0.0, "Новости: нет данных", False
 
