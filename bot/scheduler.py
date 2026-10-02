@@ -328,12 +328,12 @@ async def _check_signal_alerts(context):
                 logger.debug("Сигнал %s скор %d < %d — молчим", coin, best_score, ALERT_MIN_SCORE)
                 continue
 
-            from datetime import datetime, timezone
-            hour_key = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H")
-            idem_key = f"{coin}:{status}:{hour_key}"
+            # Ключ без часа — cooldown_seconds в БД сам следит за временем
+            idem_key = f"{coin}:{status}"
 
             if alert_already_sent(idem_key, cooldown_seconds=ALERT_COOLDOWN):
-                logger.debug("Алерт %s уже отправлен, пропускаем", idem_key)
+                logger.debug("Алерт %s уже отправлен (cooldown %dч), пропускаем",
+                             idem_key, ALERT_COOLDOWN // 3600)
                 continue
 
             # Цена и торговый план
@@ -482,7 +482,8 @@ async def _check_signal_outcomes(context):
       - Задет стоп       → LOSS → уведомление + закрытие
       - Прошло > 15 дней → TIMEOUT → тихое закрытие
     """
-    from data.coingecko import get_price
+    from market_data.binance_futures import get_futures_ticker
+    from market_data.binance_rest import get_price as spot_get_price
     from db.database import signal_trades_get_open, signal_trade_close
     from datetime import datetime, timezone
 
@@ -505,8 +506,32 @@ async def _check_signal_outcomes(context):
         created_at = sig["created_at"]
 
         try:
-            price_data = await asyncio.to_thread(get_price, coin)
-            cur_price  = float(price_data["price_usd"])
+            # Старые монеты не в TRACKED_COINS → тихо закрываем как timeout
+            if coin not in TRACKED_COINS:
+                try:
+                    if isinstance(created_at, str):
+                        created_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    else:
+                        created_dt = created_at
+                    age_days = (datetime.now(timezone.utc) - created_dt).days
+                    if age_days >= 1:
+                        signal_trade_close(trade_id, "timeout", entry, 0, 0,
+                                           f"Монета {coin} больше не отслеживается")
+                        logger.info("Outcome TIMEOUT (old coin): %s #%d", coin, trade_id)
+                except Exception:
+                    pass
+                continue
+
+            # Получаем текущую цену через Binance
+            try:
+                ft = await asyncio.to_thread(get_futures_ticker, coin)
+                cur_price = ft["last_price"] if ft["last_price"] > 0 else ft["mark_price"]
+            except Exception:
+                spot_data = await asyncio.to_thread(spot_get_price, coin)
+                cur_price = float(spot_data.get("price", 0))
+            if not cur_price:
+                continue
+
             pnl_pct     = (cur_price - entry) / entry
             pnl_lev_pct = pnl_pct * leverage
 
