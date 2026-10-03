@@ -182,15 +182,15 @@ def format_trade_signal(
     target2: float | None,
     lev_data: dict,
     notes: list[str] | None = None,
+    current_price: float | None = None,
 ) -> str:
     """
     Форматирует полный торговый сигнал для Telegram (HTML).
-
-    Phase 16: добавлена цена ликвидации и предупреждения.
     """
 
     def _p(v: float) -> str:
-        if v >= 1000:  return f"${v:,.1f}"
+        if v is None:  return "—"
+        elif v >= 1000: return f"${v:,.1f}"
         elif v >= 1:   return f"${v:.3f}"
         else:          return f"${v:.5f}"
 
@@ -214,10 +214,14 @@ def format_trade_signal(
     # Direction label
     dir_icon = "🟢 LONG" if direction == "LONG" else "🔴 SHORT"
 
+    cur_price_line = ""
+    if current_price and current_price > 0:
+        cur_price_line = f"💵 <b>Binance Futures СЕЙЧАС:</b> <code>{_p(current_price)}</code>\n"
+
     target2_line = ""
     if target2:
         target2_line = (
-            f"  Цель 2:  {_p(target2)} "
+            f"  🎯 Цель 2:  {_p(target2)} "
             f"(<code>+{lev_data['reward2_pct']:.1f}%</code>, "
             f"×{lev} = <code>+{r2:.1f}%</code>)\n"
         )
@@ -241,27 +245,25 @@ def format_trade_signal(
 
     lev_color = "🔴" if lev >= 5 else ("🟡" if lev >= 3 else "🟢")
 
+    market_entry_line = ""
+    if current_price and current_price > 0:
+        market_entry_line = f"  ⚡ По рынку прямо сейчас: ~<code>{_p(current_price)}</code>\n"
+
     return (
         f"{emoji} <b>{signal_status} — {coin.upper()}</b>  {dir_icon}\n"
         f"<code>[{bar}]</code> {setup_score}/100\n\n"
-
-        f"💰 <b>Торговый план:</b>\n"
-        f"  Вход:    {_p(entry_low)} — {_p(entry_high)}\n"
-        f"  Стоп:    {_p(stop)} (<code>-{lev_data['risk_pct']:.1f}%</code>)\n"
-        f"  Цель 1:  {_p(target1)} (<code>+{lev_data['reward1_pct']:.1f}%</code>)\n"
+        f"{cur_price_line}"
+        f"💰 <b>Торговый план (плечо ×{lev}):</b>\n"
+        f"{market_entry_line}"
+        f"  📍 Зона лимитки (откат): {_p(entry_low)} — {_p(entry_high)}\n"
+        f"  🛑 Стоп-лосс: {_p(stop)} (<code>-{lev_data['risk_pct']:.1f}%</code> → <b>-{risk:.1f}%</b>)\n"
+        f"  🎯 Цель 1:   {_p(target1)} (<code>+{lev_data['reward1_pct']:.1f}%</code> → <b>+{r1:.1f}%</b>)\n"
         f"{target2_line}"
-        f"  R/R:     <code>{rr:.2f}:1</code>\n\n"
-
-        f"{lev_color} <b>Плечо: {lev}x</b>  |  {conf}\n"
-        f"  Риск (стоп ×{lev}):  <code>-{risk:.1f}%</code>\n"
-        f"  Доход T1 (×{lev}):   <code>+{r1:.1f}%</code>\n"
-        f"  Доход T2 (×{lev}):   <code>+{r2:.1f}%</code>\n"
+        f"  ⚖️ R/R:      <code>{rr:.2f}:1</code>\n"
         f"{liq_line}"
         f"{warn_lines}\n"
-
         f"📐 <b>Размер позиции</b> (риск 2% депо):\n"
         f"  Маржа: <code>~{marg:.0f}%</code> депозита\n"
-        f"  Пример $1000 депо → маржа ~<code>${marg*10:.0f}</code>\n"
 
         f"{notes_block}\n"
         f"<i>⚠️ Аналитика, не финансовый совет.\n"

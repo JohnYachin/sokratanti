@@ -25,21 +25,11 @@ from db.database import save_signal, get_history
 logger = logging.getLogger(__name__)
 
 # ── Монеты по умолчанию ──────────────────────────────────────────────────────
-# Монеты с Binance USDT-M Futures — синхронизировано с scheduler.py
-TRACKED_COINS = [
-    "btc", "eth", "bnb", "sol", "xrp",
-    "doge", "ada", "avax", "link", "dot",
-    "ltc", "atom", "near", "uni", "trx",
-    "bch", "aave", "apt", "arb", "op",
-]
+# Синхронизировано с scheduler.py — 5 главных монет Binance Futures
+TRACKED_COINS = ["btc", "eth", "bnb", "sol", "doge"]
 COIN_NAMES = {
-    "btc":  "Bitcoin",      "eth":  "Ethereum",    "bnb":  "BNB",
-    "sol":  "Solana",       "xrp":  "Ripple",       "doge": "Dogecoin",
-    "ada":  "Cardano",      "avax": "Avalanche",    "link": "Chainlink",
-    "dot":  "Polkadot",     "ltc":  "Litecoin",     "atom": "Cosmos",
-    "near": "NEAR",        "uni":  "Uniswap",      "trx":  "TRON",
-    "bch":  "Bitcoin Cash", "aave": "Aave",         "apt":  "Aptos",
-    "arb":  "Arbitrum",     "op":   "Optimism",
+    "btc":  "Bitcoin",  "eth":  "Ethereum", "bnb":  "BNB",
+    "sol":  "Solana",   "doge": "Dogecoin",
 }
 
 
@@ -67,27 +57,29 @@ def auth_required(func):
 @auth_required
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
-        "🤖 <b>Sokratanti</b> — твой крипто-ассистент v2.0\n\n"
-        "📋 <b>Команды:</b>\n"
-        "/price <code>BTC</code> — текущая цена\n"
-        "/signal <code>BTC</code> — торговый сигнал + точка входа + SL + TP1 + TP2\n"
-        "/futures <code>BTC</code> — Futures: Mark Price, Funding Rate, OI\n"
-        "/signal <code>BTC</code> — сигнал + вход + SL + TP1 + TP2 + плечо\n"
-        "/scan — все 20 монет (LONG/SHORT + торговые планы)\n"
-        "/price <code>BTC</code> — цена (Futures + Spot)\n"
-        "/sentiment <code>BTC</code> — настроение рынка (AI)\n"
-        "/analyze <code>BTC</code> — анализ от Perplexity\n"
-        "/news <code>BTC</code> — свежие новости\n"
-        "/feargreed — индекс страха и жадности\n"
-        "/history — история последних сигналов\n"
-        "/results — статистика сделок (win/loss)\n"
-        "/coins — все 20 монет\n\n"
-        "📦 <b>Портфель:</b>\n"
-        "/portfolio — мои позиции + P&L + сигналы\n"
-        "/add <code>BTC 0.1 63500</code> — добавить позицию\n"
-        "/remove <code>BTC</code> — удалить позицию\n\n"
-        "⏰ <b>Авто-алерты каждые 30 мин</b> по 20 монетам\n"
-        "🚨 LONG/SHORT сетап → Mark Price + Funding + плечо"
+        "🤖 <b>Sokratanti</b> — фьючерсы Binance, плечо ×10\n"
+        "Монеты: BTC · ETH · BNB · SOL · DOGE\n\n"
+        "⚡ <b>Скальпинг (5m/15m, 10–45 мин):</b>\n"
+        "/scalp — точки входа по всем монетам прямо сейчас\n"
+        "/scalp <code>DOGE</code> — скальп по одной монете\n\n"
+        "📊 <b>Трейдинг (1h/4h/1d):</b>\n"
+        "/signal <code>BTC</code> — вход, стоп, TP1, TP2\n"
+        "/scan — обзор всех 5 монет\n\n"
+        "💼 <b>Мой аккаунт:</b>\n"
+        "/account — баланс и открытые позиции\n"
+        "/report — разбор моих сделок + рынок\n"
+        "/strategy — моя стратегия по истории\n"
+        "/myhistory — история сделок\n"
+        "/results — статистика сигналов бота\n\n"
+        "📰 <b>Рынок:</b>\n"
+        "/price <code>BTC</code> — цена Binance Futures\n"
+        "/futures <code>BTC</code> — фандинг, Open Interest\n"
+        "/news <code>BTC</code> — новости\n"
+        "/feargreed — индекс страха и жадности\n\n"
+        "🔔 <b>Авто-алерты:</b> только когда есть вход\n"
+        "  • скальп — проверка каждые 5 мин\n"
+        "  • трейдинг — каждые 2 часа\n"
+        "  • TP/SL по открытым позициям — каждые 10 мин"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
@@ -102,7 +94,32 @@ async def cmd_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+def _entry_block(plan, cur_price, is_short: bool, coin: str, fp) -> str:
+    """Сравнивает живую цену с зоной входа: по рынку или лимиткой."""
+    lo, hi = plan.entry_low, plan.entry_high
+    zone = f"<code>{fp(lo)} — {fp(hi)}</code>"
+    if not cur_price or lo <= cur_price <= hi:
+        return f"✅ <b>Цена В ЗОНЕ — входи по рынку:</b> <code>{fp(cur_price)}</code>\n"
+    missed = (not is_short and cur_price > hi) or (is_short and cur_price < lo)
+    if missed:
+        edge = hi if not is_short else lo
+        dist = abs(cur_price - edge) / cur_price * 100
+        return (
+            f"⏳ <b>НЕ входи по рынку</b> — цена ушла на {dist:.1f}% от зоны\n"
+            f"📍 Ставь ЛИМИТКУ: {zone}\n"
+            f"<i>Нужен вход сейчас → /scalp {coin.upper()}</i>\n"
+        )
+    return f"📍 Цена подходит к зоне — лимитка: {zone}\n"
+
+
 # ── /price ────────────────────────────────────────────────────────────────────
+def _fmt(v: float) -> str:
+    if v is None: return "—"
+    if v >= 1000: return f"${v:,.1f}"
+    if v >= 1:    return f"${v:,.3f}"
+    return f"${v:.5f}"
+
+
 @auth_required
 async def cmd_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     coin = (context.args[0] if context.args else "btc").lower()
@@ -110,47 +127,75 @@ async def cmd_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⏳ Получаю данные по <b>{coin.upper()}</b>...", parse_mode=ParseMode.HTML
     )
     try:
-        # Futures Mark Price — основной курс
-        futures_line = ""
-        try:
-            from market_data.binance_futures import get_futures_ticker
-            ft  = await asyncio.to_thread(get_futures_ticker, coin)
-            mk  = ft["mark_price"]
-            lp  = ft["last_price"]
-            fch = ft["price_change_pct"]
-            fr  = ft["last_funding_rate_pct"]
-            fr_icon = "🔴" if fr > 0.05 else ("🟢" if fr < -0.02 else "⚪")
-            futures_line = (
-                f"📈 <b>Binance Futures:</b>\n"
-                f"  Mark Price: <code>${mk:,.4f}</code>\n"
-                f"  Last Price: <code>${lp:,.4f}</code>\n"
-                f"  24ч изм: <code>{fch:+.2f}%</code>\n"
-                f"  {fr_icon} Funding Rate: <code>{fr:+.4f}%</code>\n\n"
-            )
-        except Exception:
-            pass
-
-        # Spot данные (market cap, volume)
-        data = await asyncio.to_thread(get_price, coin)
-        ch  = data["change_24h"]
-        ch7 = data["change_7d"]
-        ch_icon  = "📈" if ch  >= 0 else "📉"
-        ch7_icon = "📈" if ch7 >= 0 else "📉"
+        from market_data.binance_futures import get_futures_ticker
+        ft = await asyncio.to_thread(get_futures_ticker, coin)
+        if not ft["last_price"]:
+            await msg.edit_text(f"❌ {coin.upper()} не найдена на Binance Futures")
+            return
+        fr = ft["last_funding_rate_pct"]
+        ch = ft["price_change_pct"]
+        fr_icon = "🔴" if fr > 0.05 else ("🟢" if fr < -0.02 else "⚪")
         text = (
-            f"💰 <b>{data['name']} ({data['symbol']})</b>\n\n"
-            f"{futures_line}"
-            f"📉 <b>Spot (CoinGecko):</b>\n"
-            f"  Цена:      <code>${data['price_usd']:,.4f}</code>\n"
-            f"  {ch_icon} 24ч:    <code>{ch:+.2f}%</code>\n"
-            f"  {ch7_icon} 7д:     <code>{ch7:+.2f}%</code>\n"
-            f"  ⬆️ Макс 24ч: <code>${data['high_24h']:,.4f}</code>\n"
-            f"  ⬇️ Мин 24ч:  <code>${data['low_24h']:,.4f}</code>\n"
-            f"  💸 Капитал:  <code>${data['market_cap']:,.0f}</code>\n"
-            f"  📦 Объём:    <code>${data['volume_24h']:,.0f}</code>"
+            f"💰 <b>{coin.upper()}USDT — Binance Futures</b>\n\n"
+            f"💵 Цена:       <code>{_fmt(ft['last_price'])}</code>\n"
+            f"🎯 Mark Price: <code>{_fmt(ft['mark_price'])}</code>\n"
+            f"{'📈' if ch >= 0 else '📉'} 24ч:       <code>{ch:+.2f}%</code>\n"
+            f"⬆️ Макс 24ч:  <code>{_fmt(ft['high_24h'])}</code>\n"
+            f"⬇️ Мин 24ч:   <code>{_fmt(ft['low_24h'])}</code>\n"
+            f"📦 Объём:     <code>${ft['volume_usdt']/1e6:,.0f}M</code>\n"
+            f"{fr_icon} Фандинг:   <code>{fr:+.4f}%</code>"
         )
         await msg.edit_text(text, parse_mode=ParseMode.HTML)
     except Exception as e:
         logger.error("price error: %s", e)
+        await msg.edit_text(f"❌ Ошибка: <code>{e}</code>", parse_mode=ParseMode.HTML)
+
+
+# ── /scalp — скальпинг 5m/15m ────────────────────────────────────────────────
+def format_scalp(r: dict) -> str:
+    """Короткое сообщение скальп-сигнала: вход по рынку, стоп, TP1, TP2."""
+    coin = r["coin"].upper()
+    if not r.get("setup"):
+        return (
+            f"⚪ <b>{coin}</b> {_fmt(r['price'])} — нет скальпа "
+            f"(RSI 5m {r.get('rsi_5m', 0):.0f}, скор {r.get('score', 0)})"
+        )
+    long_ = r["direction"] == "LONG"
+    icon  = "🟢" if long_ else "🔴"
+    word  = "ЛОНГ" if long_ else "ШОРТ"
+    sign  = "+" if long_ else "-"
+    reasons = " · ".join(r["reasons"][:3])
+    return (
+        f"{icon} <b>СКАЛЬП {word} — {coin}</b>  (скор {r['score']}/100)\n"
+        f"⚡ Вход по рынку: <code>{_fmt(r['market_entry'])}</code>\n"
+        f"🛑 Стоп:  <code>{_fmt(r['sl'])}</code>  (-{r['sl_pct']:.2f}% → <b>-{r['sl_10x']:.0f}%</b> при ×10)\n"
+        f"🎯 TP1:   <code>{_fmt(r['tp1'])}</code>  ({sign}{r['tp1_pct']:.2f}% → <b>+{r['tp1_10x']:.0f}%</b>)\n"
+        f"🎯 TP2:   <code>{_fmt(r['tp2'])}</code>  ({sign}{r['tp2_pct']:.2f}% → <b>+{r['tp2_10x']:.0f}%</b>)\n"
+        f"⏱ Держать 10–45 мин. На TP1 закрой половину, стоп в безубыток.\n"
+        f"<i>{reasons}</i>"
+    )
+
+
+@auth_required
+async def cmd_scalp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from analysis.scalp import analyze_scalp, scan_all_scalps
+    msg = await update.message.reply_text("⚡ Смотрю 5m/15m графики...", parse_mode=ParseMode.HTML)
+    try:
+        if context.args:
+            r = await asyncio.to_thread(analyze_scalp, context.args[0].lower())
+            text = format_scalp(r)
+        else:
+            results = await asyncio.to_thread(scan_all_scalps, TRACKED_COINS)
+            setups  = [r for r in results if r.get("setup")]
+            others  = [r for r in results if not r.get("setup")]
+            parts = [format_scalp(r) for r in setups]
+            if not setups:
+                parts.append("😴 <b>Сейчас скальп-входов нет</b> — рынок во флэте.")
+            parts.append("\n".join(format_scalp(r) for r in others))
+            text = "\n\n".join(p for p in parts if p)
+        await msg.edit_text(text, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logger.error("scalp error: %s", e)
         await msg.edit_text(f"❌ Ошибка: <code>{e}</code>", parse_mode=ParseMode.HTML)
 
 
@@ -186,8 +231,8 @@ async def cmd_futures(update: Update, context: ContextTypes.DEFAULT_TYPE):
         l24 = ticker["low_24h"]
         vol = ticker["volume_24h"]
 
-        fr_cur = funding["current_rate_pct"]
-        fr_nxt = funding["predicted_rate_pct"]
+        fr_cur = funding.get("current_rate_pct", ticker.get("last_funding_rate_pct", 0))
+        fr_nxt = funding.get("predicted_rate_pct", funding.get("avg_rate_pct", fr_cur))
         next_t = funding.get("next_funding_time", "")
         fr_sig, fr_adj, fr_desc = interpret_funding_rate(fr_cur)
 
@@ -382,7 +427,7 @@ async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"<i>⏱ Цена меняется каждую секунду</i>\n"
                 f"{tf_block}\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"📍 <b>Зона входа:</b> <code>{fp(plan.entry_low)} — {fp(plan.entry_high)}</code>\n"
+                f"{_entry_block(plan, cur_price, IS_SHORT, coin, fp)}"
                 f"⚡ Плечо: <b>×{USER_LEV}</b>  |  Скор: {setup_score}/100\n\n"
                 f"🎯 <b>TP1:</b> <code>{fp(tp1)}</code>  "
                 f"(+{tp1_pct:.1f}% → <b>+{gain1_10x:.0f}%</b>)\n"
@@ -1210,7 +1255,7 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     # Монеты для анализа рынка
-    MAIN_COINS = ["btc", "eth", "bnb", "sol", "doge", "ton"]
+    MAIN_COINS = ["btc", "eth", "bnb", "sol", "doge"]
 
     def _simple_verdict(sig: dict) -> tuple[str, str]:
         """Переводит технический сигнал в понятный вывод."""

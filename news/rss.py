@@ -135,7 +135,8 @@ def _fetch_rss(source: dict, timeout: int = 8) -> list[NewsItem]:
             continue
 
         # Убираем HTML теги из описания
-        desc_clean = ET.fromstring(f"<x>{desc}</x>").text or "" if "<" in desc else desc
+        import re as _re
+        desc_clean = _re.sub(r"<[^>]+>", " ", desc) if "<" in desc else desc
 
         published = _parse_date(pub)
         symbols = extract_symbols(title + " " + desc_clean)

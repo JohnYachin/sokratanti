@@ -56,6 +56,7 @@ SPOT_ONLY_COINS: set[str] = {"ton", "toncoin"}
 
 CACHE_TTL: dict[str, int] = {
     "5m":  30,     # 30 секунд
+    "15m": 60,     # 1 минута
     "30m": 120,    # 2 минуты
     "1h":  60,     # 1 минута
     "4h":  240,    # 4 минуты
@@ -417,14 +418,22 @@ def get_futures_ticker(coin: str) -> dict:
         # Mark price отдельным запросом
         mark_data = get_mark_price(coin)
 
+        high_val = float(raw.get("highPrice", 0))
+        low_val  = float(raw.get("lowPrice", 0))
+        vol_coin = float(raw.get("volume", 0))
+        vol_usdt = float(raw.get("quoteVolume", 0))
+
         result = {
             "last_price":        float(raw.get("lastPrice", 0)),
             "mark_price":        mark_data.get("mark_price", 0),
             "price_change_pct":  float(raw.get("priceChangePercent", 0)),
-            "high":              float(raw.get("highPrice", 0)),
-            "low":               float(raw.get("lowPrice", 0)),
-            "volume":            float(raw.get("volume", 0)),
-            "volume_usdt":       float(raw.get("quoteVolume", 0)),
+            "high":              high_val,
+            "high_24h":          high_val,
+            "low":               low_val,
+            "low_24h":           low_val,
+            "volume":            vol_coin,
+            "volume_24h":        vol_coin,
+            "volume_usdt":       vol_usdt,
             "count":             int(raw.get("count", 0)),
             "last_funding_rate_pct": mark_data.get("last_funding_rate_pct", 0),
             "symbol":            symbol,
@@ -434,7 +443,8 @@ def get_futures_ticker(coin: str) -> dict:
     except Exception as e:
         logger.error("get_futures_ticker %s: %s", coin, e)
         return {"last_price": 0, "mark_price": 0, "price_change_pct": 0,
-                "high": 0, "low": 0, "volume": 0, "volume_usdt": 0,
+                "high": 0, "high_24h": 0, "low": 0, "low_24h": 0,
+                "volume": 0, "volume_24h": 0, "volume_usdt": 0,
                 "count": 0, "last_funding_rate_pct": 0, "symbol": symbol}
 
 

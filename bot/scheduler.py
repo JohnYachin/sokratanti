@@ -52,6 +52,14 @@ def schedule_jobs(app: Application):
         data={"user_id": user_id},
         name="signal_alerts",
     )
+    # ── Скальп-алерты 5m — каждые 5 минут, только если есть вход ──
+    app.job_queue.run_repeating(
+        _check_scalp_alerts,
+        interval=300,
+        first=60,
+        data={"user_id": user_id},
+        name="scalp_alerts",
+    )
     # ── Мониторинг открытых позиций (TP/SL/ликвидация) — каждые 10 минут ──
     app.job_queue.run_repeating(
         _monitor_open_positions,
@@ -297,6 +305,40 @@ def _trend_emoji(trend: str) -> str:
     return {"bullish": "📈", "bearish": "📉", "neutral": "➡️"}.get(trend, "❓")
 
 
+# ── Скальп-алерты (5m/15m) ──────────────────────────────────────────────────
+SCALP_MIN_SCORE = 65
+SCALP_COOLDOWN  = 45 * 60  # 45 минут на монету+направление
+
+
+async def _check_scalp_alerts(context):
+    """Каждые 5 минут: если на 5m есть вход — короткий алерт. Иначе тишина."""
+    from analysis.scalp import scan_all_scalps
+    from bot.handlers import format_scalp
+    from db.database import alert_already_sent, record_alert
+
+    user_id = context.job.data["user_id"]
+    try:
+        results = await asyncio.to_thread(scan_all_scalps, TRACKED_COINS)
+    except Exception as e:
+        logger.error("scalp scan error: %s", e)
+        return
+
+    for r in results:
+        if not r.get("setup") or r.get("score", 0) < SCALP_MIN_SCORE:
+            continue
+        key = f"scalp:{r['coin']}:{r['direction']}"
+        if alert_already_sent(key, cooldown_seconds=SCALP_COOLDOWN):
+            continue
+        try:
+            await context.bot.send_message(
+                chat_id=user_id, text=format_scalp(r), parse_mode=ParseMode.HTML,
+            )
+            record_alert(key, r["coin"], f"SCALP_{r['direction']}", r["price"])
+            logger.info("Scalp alert: %s %s score=%d", r["coin"], r["direction"], r["score"])
+        except Exception as e:
+            logger.error("scalp alert send error: %s", e)
+
+
 # ── Алерты (из БД, не из RAM) ───────────────────────────────────────────────
 async def _check_signal_alerts(context):
     """
@@ -397,6 +439,7 @@ async def _check_signal_alerts(context):
                     target2=t2,
                     lev_data=lev_data,
                     notes=reasons_short,
+                    current_price=price,
                 )
 
                 # Сохраняем в БД для трекинга

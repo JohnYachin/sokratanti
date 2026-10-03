@@ -280,12 +280,29 @@ def save_signal(coin: str, signal: str, score: int = 0,
     else:
         db_path = os.getenv("SQLITE_PATH", "sokratanti.db")
         conn = sqlite3.connect(db_path)
-        conn.execute(
-            "INSERT INTO signals (coin, signal, score, rsi, macd_diff, price_usd) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (coin, signal, score, rsi, macd_diff, price_usd)
-        )
-        conn.commit(); conn.close()
+        try:
+            conn.execute(
+                "INSERT INTO signals (coin, signal, score, rsi, macd_diff, price_usd) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (coin, signal, score, rsi, macd_diff, price_usd)
+            )
+            conn.commit()
+        except sqlite3.OperationalError as e:
+            if "no column named price_usd" in str(e):
+                try:
+                    conn.execute("ALTER TABLE signals ADD COLUMN price_usd REAL")
+                    conn.execute(
+                        "INSERT INTO signals (coin, signal, score, rsi, macd_diff, price_usd) "
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                        (coin, signal, score, rsi, macd_diff, price_usd)
+                    )
+                    conn.commit()
+                except Exception as inner_e:
+                    logger.warning("save_signal column add error: %s", inner_e)
+            else:
+                logger.warning("save_signal SQLite error: %s", e)
+        finally:
+            conn.close()
 
 
 # ── Запись цены ───────────────────────────────────────────────────────────────
@@ -476,7 +493,8 @@ def record_alert(idempotency_key: str, coin: str, signal: str, price_usd: float)
                 """
                 INSERT INTO alerts (idempotency_key, coin, signal, price_usd)
                 VALUES (%s, %s, %s, %s)
-                ON CONFLICT (idempotency_key) DO NOTHING
+                ON CONFLICT (idempotency_key)
+                DO UPDATE SET sent_at = NOW(), price_usd = EXCLUDED.price_usd
                 """,
                 (idempotency_key, coin, signal, price_usd)
             )
@@ -487,8 +505,10 @@ def record_alert(idempotency_key: str, coin: str, signal: str, price_usd: float)
             cur = conn.cursor()
             cur.execute(
                 """
-                INSERT OR IGNORE INTO alerts (idempotency_key, coin, signal, price_usd)
+                INSERT INTO alerts (idempotency_key, coin, signal, price_usd)
                 VALUES (?, ?, ?, ?)
+                ON CONFLICT(idempotency_key)
+                DO UPDATE SET sent_at = datetime('now'), price_usd = excluded.price_usd
                 """,
                 (idempotency_key, coin, signal, price_usd)
             )

@@ -171,12 +171,26 @@ async def cmd_portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # Получаем текущие цены + сигналы конкурентно по уникальным монетам
-        from data.coingecko import get_price
+        # Получаем текущие цены (Binance Futures/Spot) + сигналы
         from analysis.signals import generate_signal
 
+        def _fetch_coin_price(c: str) -> dict:
+            try:
+                from market_data.binance_futures import get_futures_ticker
+                ft = get_futures_ticker(c)
+                p = ft["last_price"] if ft["last_price"] > 0 else ft["mark_price"]
+                if p > 0:
+                    return {"price_usd": p}
+            except Exception:
+                pass
+            try:
+                from market_data.binance_rest import get_price as spot_p
+                return {"price_usd": float(spot_p(c).get("price", 0))}
+            except Exception:
+                return {"price_usd": 0.0}
+
         unique_coins = list({p["coin"] for p in positions})
-        price_tasks  = [asyncio.to_thread(get_price, c) for c in unique_coins]
+        price_tasks  = [asyncio.to_thread(_fetch_coin_price, c) for c in unique_coins]
         signal_tasks = [asyncio.to_thread(generate_signal, c) for c in unique_coins]
 
         price_results  = await asyncio.gather(*price_tasks,  return_exceptions=True)

@@ -25,6 +25,7 @@ from bot.handlers import (
     cmd_myhistory,
     cmd_strategy,
     cmd_report,
+    cmd_scalp,
 )
 from bot.portfolio_handlers import (
     cmd_portfolio,
@@ -72,51 +73,48 @@ def main():
     # --- Обработчик ошибок ---
     app.add_error_handler(error_handler)
 
-    # --- Команды ---
+    # --- Команды (только рабочие) ---
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_start))
+    app.add_handler(CommandHandler("scalp", cmd_scalp))
+    app.add_handler(CommandHandler("signal", cmd_signal))
+    app.add_handler(CommandHandler("scan", cmd_scan))
+    app.add_handler(CommandHandler("account", cmd_account))
+    app.add_handler(CommandHandler("report", cmd_report))
+    app.add_handler(CommandHandler("strategy", cmd_strategy))
+    app.add_handler(CommandHandler("myhistory", cmd_myhistory))
+    app.add_handler(CommandHandler("results", cmd_results))
     app.add_handler(CommandHandler("price", cmd_price))
     app.add_handler(CommandHandler("futures", cmd_futures))
-    app.add_handler(CommandHandler("signal", cmd_signal))
-    app.add_handler(CommandHandler("sentiment", cmd_sentiment))
-    app.add_handler(CommandHandler("history", cmd_history))
-    app.add_handler(CommandHandler("coins", cmd_coins))
-    app.add_handler(CommandHandler("feargreed", cmd_feargreed))
     app.add_handler(CommandHandler("news", cmd_news))
-    app.add_handler(CommandHandler("analyze", cmd_analyze))
-    app.add_handler(CommandHandler("scan", cmd_scan))
-    # Portfolio
+    app.add_handler(CommandHandler("feargreed", cmd_feargreed))
+    # Служебные (не в меню)
+    app.add_handler(CommandHandler("coins", cmd_coins))
+    app.add_handler(CommandHandler("history", cmd_history))
+    app.add_handler(CommandHandler("backtest", cmd_backtest))
+    app.add_handler(CommandHandler("optimize", cmd_optimize))
+    app.add_handler(CommandHandler("params", cmd_params))
     app.add_handler(CommandHandler("portfolio", cmd_portfolio))
     app.add_handler(CommandHandler("add", cmd_add))
     app.add_handler(CommandHandler("remove", cmd_remove))
     app.add_handler(CommandHandler("remove_id", cmd_remove_id))
-    # Backtest
-    app.add_handler(CommandHandler("backtest", cmd_backtest))
-    # Adaptive Learning
-    app.add_handler(CommandHandler("optimize", cmd_optimize))
-    app.add_handler(CommandHandler("params", cmd_params))
-    app.add_handler(CommandHandler("results", cmd_results))
-    # Binance Account API
-    app.add_handler(CommandHandler("account", cmd_account))
-    app.add_handler(CommandHandler("myhistory", cmd_myhistory))
-    # Персональная стратегия
-    app.add_handler(CommandHandler("strategy", cmd_strategy))
-    # Полный отчёт (история + рынок сейчас)
-    app.add_handler(CommandHandler("report", cmd_report))
 
     # --- Меню команд (кнопка "/" внизу чата) ---
     async def _set_menu(app):
         from telegram import BotCommand
         await app.bot.set_my_commands([
-            BotCommand("signal",    "📊 Сигнал — BTC/ETH/SOL/DOGE/BNB"),
-            BotCommand("account",   "💼 Мой баланс и открытые позиции"),
-            BotCommand("scan",      "🔍 Сканировать все 6 монет"),
-            BotCommand("report",    "📋 Анализ моих сделок"),
-            BotCommand("strategy",  "🎯 Моя торговая стратегия"),
-            BotCommand("myhistory", "📜 История сделок по монете"),
-            BotCommand("feargreed", "😨 Индекс страха и жадности"),
-            BotCommand("news",      "📰 Крипто новости"),
-            BotCommand("price",     "💵 Текущая цена монеты"),
+            BotCommand("scalp",     "⚡ Скальп 5m — вход по рынку сейчас"),
+            BotCommand("signal",    "📊 Сигнал трейдинг: /signal BTC"),
+            BotCommand("scan",      "🔍 Обзор всех 5 монет"),
+            BotCommand("account",   "💼 Баланс и открытые позиции"),
+            BotCommand("report",    "📋 Разбор моих сделок + рынок"),
+            BotCommand("strategy",  "🎯 Моя стратегия по истории"),
+            BotCommand("myhistory", "📜 История моих сделок"),
+            BotCommand("results",   "🏆 Статистика сигналов бота"),
+            BotCommand("price",     "💵 Цена: /price DOGE"),
+            BotCommand("futures",   "📈 Фандинг и Open Interest"),
+            BotCommand("news",      "📰 Новости: /news BTC"),
+            BotCommand("feargreed", "😨 Страх и жадность"),
             BotCommand("help",      "❓ Все команды"),
         ])
         logger.info("Bot command menu set.")
