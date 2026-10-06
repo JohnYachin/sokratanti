@@ -642,7 +642,14 @@ def signal_trade_open(coin: str, signal_type: str, setup_score: int,
                       entry_price: float, stop_loss: float,
                       target1: float, target2: float | None,
                       leverage: int) -> int:
-    """Сохраняет новый открытый сигнал. Возвращает ID."""
+    """Сохраняет новый открытый сигнал. Возвращает ID.
+    Если по монете уже есть открытая сделка — новую НЕ создаём (без дублей)."""
+    try:
+        for t in signal_trades_get_open():
+            if t["coin"] == coin:
+                return t["id"]
+    except Exception:
+        pass
     try:
         if _use_postgres():
             conn = _get_pg_conn(); cur = conn.cursor()
@@ -747,7 +754,7 @@ def signal_trades_get_recent(limit: int = 10) -> list[dict]:
                 "SELECT id,coin,signal_type,setup_score,entry_price,"
                 "exit_price,pnl_pct,pnl_lev_pct,leverage,status,"
                 "outcome_note,created_at,closed_at "
-                "FROM signal_trades WHERE status!='open' "
+                "FROM signal_trades WHERE status NOT IN ('open','void') "
                 "ORDER BY closed_at DESC LIMIT %s", (limit,)
             )
             rows = cur.fetchall(); cur.close(); conn.close()
@@ -759,7 +766,7 @@ def signal_trades_get_recent(limit: int = 10) -> list[dict]:
                 "SELECT id,coin,signal_type,setup_score,entry_price,"
                 "exit_price,pnl_pct,pnl_lev_pct,leverage,status,"
                 "outcome_note,created_at,closed_at "
-                "FROM signal_trades WHERE status!='open' "
+                "FROM signal_trades WHERE status NOT IN ('open','void') "
                 "ORDER BY closed_at DESC LIMIT ?", (limit,)
             )
             rows = cur.fetchall(); conn.close()

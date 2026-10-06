@@ -569,42 +569,52 @@ async def _check_signal_outcomes(context):
                     pass
                 continue
 
-            # Получаем текущую цену через Binance
-            try:
-                ft = await asyncio.to_thread(get_futures_ticker, coin)
-                cur_price = ft["last_price"] if ft["last_price"] > 0 else ft["mark_price"]
-            except Exception:
-                spot_data = await asyncio.to_thread(spot_get_price, coin)
-                cur_price = float(spot_data.get("price", 0))
-            if not cur_price:
+            # Честная проверка: свечи 5m с момента сигнала — что задето первым, стоп или цель
+            is_short = stop > entry
+            d = -1 if is_short else 1
+            if isinstance(created_at, str):
+                created_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            else:
+                created_dt = created_at
+            if created_dt.tzinfo is None:
+                created_dt = created_dt.replace(tzinfo=timezone.utc)
+
+            def _candles():
+                import requests as _rq
+                sym = f"{coin.upper()}USDT"
+                r = _rq.get("https://fapi.binance.com/fapi/v1/klines",
+                            params={"symbol": sym, "interval": "5m",
+                                    "startTime": int(created_dt.timestamp() * 1000),
+                                    "limit": 1500}, timeout=15)
+                r.raise_for_status()
+                return [(float(k[2]), float(k[3]), float(k[4])) for k in r.json()]
+
+            candles = await asyncio.to_thread(_candles)
+            if not candles:
                 continue
 
-            pnl_pct     = (cur_price - entry) / entry
-            pnl_lev_pct = pnl_pct * leverage
-
             outcome = None; exit_price = None; note = ""
+            for hi, lo, _cl in candles:
+                hit_sl = (lo <= stop) if d == 1 else (hi >= stop)
+                hit_tp = (hi >= t1) if d == 1 else (lo <= t1)
+                if hit_sl:          # консервативно: если оба в одной свече — считаем стоп
+                    outcome, exit_price = "loss", stop
+                    note = f"Стоп задет: ${stop:,.4f}"
+                    break
+                if hit_tp:
+                    outcome, exit_price = "win", t1
+                    note = f"TP1 достигнут: ${t1:,.4f}"
+                    break
 
-            if cur_price <= stop:
-                outcome = "loss"; exit_price = cur_price
-                note = f"Стоп задет: ${cur_price:,.4f}"
-            elif cur_price >= t1:
-                outcome = "win"; exit_price = cur_price
-                hit = "T2" if t2 and cur_price >= t2 else "T1"
-                note = f"{hit} достигнута: ${cur_price:,.4f}"
-            else:
-                try:
-                    if isinstance(created_at, str):
-                        created_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                    else:
-                        created_dt = created_at
-                    if (datetime.now(timezone.utc) - created_dt).days >= 15:
-                        outcome = "timeout"; exit_price = cur_price
-                        note = f"Таймаут: ${cur_price:,.4f}"
-                except Exception:
-                    pass
+            if outcome is None and (datetime.now(timezone.utc) - created_dt).days >= 5:
+                outcome, exit_price = "timeout", candles[-1][2]
+                note = f"Таймаут 5 дней: ${exit_price:,.4f}"
 
             if outcome is None:
                 continue
+
+            pnl_pct     = d * (exit_price - entry) / entry
+            pnl_lev_pct = pnl_pct * leverage
 
             signal_trade_close(trade_id, outcome, exit_price,
                                pnl_pct * 100, pnl_lev_pct * 100, note)
