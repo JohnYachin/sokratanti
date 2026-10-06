@@ -164,7 +164,8 @@ def format_scalp(r: dict) -> str:
     icon  = "🟢" if long_ else "🔴"
     word  = "ЛОНГ" if long_ else "ШОРТ"
     sign  = "+" if long_ else "-"
-    reasons = " · ".join(r["reasons"][:3])
+    import html as _html
+    reasons = _html.escape(" · ".join(r["reasons"][:3]))
     return (
         f"{icon} <b>СКАЛЬП {word} — {coin}</b>  (скор {r['score']}/100)\n"
         f"⚡ Вход по рынку: <code>{_fmt(r['market_entry'])}</code>\n"
@@ -193,6 +194,7 @@ async def cmd_scalp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parts.append("😴 <b>Сейчас скальп-входов нет</b> — рынок во флэте.")
             parts.append("\n".join(format_scalp(r) for r in others))
             text = "\n\n".join(p for p in parts if p)
+        text += "\n\n<i>⚠️ Бэктест 21 день: эта скальп-логика пока убыточна (WR 32%). Не торгуй по ней реальными деньгами.</i>"
         await msg.edit_text(text, parse_mode=ParseMode.HTML)
     except Exception as e:
         logger.error("scalp error: %s", e)

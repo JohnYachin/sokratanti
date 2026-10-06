@@ -52,14 +52,18 @@ def schedule_jobs(app: Application):
         data={"user_id": user_id},
         name="signal_alerts",
     )
-    # ── Скальп-алерты 5m — каждые 5 минут, только если есть вход ──
-    app.job_queue.run_repeating(
-        _check_scalp_alerts,
-        interval=300,
-        first=60,
-        data={"user_id": user_id},
-        name="scalp_alerts",
-    )
+    # ── Скальп-алерты 5m — НА ПАУЗЕ ──
+    # Бэктест 21 день (5 монет, 1436 сделок): WR 32%, −1% на сделку при ×10.
+    # Включать обратно только после того, как стратегия пройдёт бэктест.
+    SCALP_ALERTS_ENABLED = False
+    if SCALP_ALERTS_ENABLED:
+        app.job_queue.run_repeating(
+            _check_scalp_alerts,
+            interval=300,
+            first=60,
+            data={"user_id": user_id},
+            name="scalp_alerts",
+        )
     # ── Мониторинг открытых позиций (TP/SL/ликвидация) — каждые 10 минут ──
     app.job_queue.run_repeating(
         _monitor_open_positions,
